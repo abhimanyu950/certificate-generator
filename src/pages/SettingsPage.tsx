@@ -5,8 +5,8 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<'firebase' | 'branding' | 'security' | 'team'>('firebase');
   
   // Settings Form States (loaded/cached in local storage)
-  const [firebaseProject, setFirebaseProject] = useState(() => localStorage.getItem('cf_firebaseSettings_projectId') || 'certforge-prod-ax7');
-  const [firebaseApiKey, setFirebaseApiKey] = useState(() => localStorage.getItem('cf_firebaseSettings_apiKey') || 'AIzaSyA_4X9mZ9K8L7J6I5H4G3F2E1D');
+  const [firebaseProject, setFirebaseProject] = useState(() => localStorage.getItem('cf_firebaseSettings_projectId') || (import.meta.env.VITE_FIREBASE_PROJECT_ID as string) || 'certforge-prod-ax7');
+  const [firebaseApiKey, setFirebaseApiKey] = useState(() => localStorage.getItem('cf_firebaseSettings_apiKey') || (import.meta.env.VITE_FIREBASE_API_KEY as string) || 'AIzaSyA_4X9mZ9K8L7J6I5H4G3F2E1D');
   
   const [emailKey, setEmailKey] = useState(() => localStorage.getItem('cf_emailSettings_key') || (import.meta.env.VITE_EMAILJS_PUBLIC_KEY as string) || '');
   const [emailService, setEmailService] = useState(() => localStorage.getItem('cf_emailSettings_service') || (import.meta.env.VITE_EMAILJS_SERVICE_ID as string) || '');

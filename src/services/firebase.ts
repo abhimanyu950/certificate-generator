@@ -3,16 +3,17 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
-// Default Firebase Configuration (from original system)
+// Default Firebase Configuration (loaded from environment variables)
 const defaultFirebaseConfig = {
-  apiKey: "AIzaSyB9aaVSRYfPqGLdRI5_UFiYx0j4MfZZRD8",
-  authDomain: "certforge-web.firebaseapp.com",
-  projectId: "certforge-web",
-  storageBucket: "certforge-web.firebasestorage.app",
-  messagingSenderId: "757918276255",
-  appId: "1:757918276255:web:dd2acef5ea61372d48e0aa",
-  measurementId: "G-883VEXH7Q7"
+  apiKey: (import.meta.env.VITE_FIREBASE_API_KEY as string) || "",
+  authDomain: (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string) || "",
+  projectId: (import.meta.env.VITE_FIREBASE_PROJECT_ID as string) || "",
+  storageBucket: (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string) || "",
+  messagingSenderId: (import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string) || "",
+  appId: (import.meta.env.VITE_FIREBASE_APP_ID as string) || "",
+  measurementId: (import.meta.env.VITE_FIREBASE_MEASUREMENT_ID as string) || ""
 };
+
 
 // Check for custom configuration in localStorage, fallback to default
 const getFirebaseConfig = () => {
