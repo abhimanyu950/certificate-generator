@@ -9,7 +9,9 @@ import {
 } from 'recharts';
 import { db } from '../services/firebase';
 import { collection, onSnapshot, getDocs, limit, query } from 'firebase/firestore';
-import { AnalyticsService, MonthlyTrend, TemplateStat, ActiveUser } from '../services/analytics.service';
+import { AnalyticsService } from '../services/analytics.service';
+import type { MonthlyTrend, TemplateStat, ActiveUser } from '../services/analytics.service';
+
 
 export default function AnalyticsPage() {
   const [totalIssuance, setTotalIssuance] = useState<number>(0);
