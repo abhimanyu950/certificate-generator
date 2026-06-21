@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useRecipientStore } from '../store/recipientStore';
+import { AuditService } from '../services/audit.service';
 
 export default function RecipientsPage() {
   const {
@@ -47,6 +48,14 @@ export default function RecipientsPage() {
       const text = event.target?.result as string;
       if (text) {
         importCSV(text);
+        const importedCount = text.split('\n').filter((l) => l.trim()).length - 1;
+        AuditService.logEvent({
+          action: 'RECIPIENT_IMPORTED',
+          userId: '',
+          entityType: 'recipient',
+          entityId: `import_${Date.now()}`,
+          metadata: { count: importedCount > 0 ? importedCount : 0 }
+        });
         alert('CSV imported successfully!');
       }
     };
@@ -70,6 +79,13 @@ export default function RecipientsPage() {
       return;
     }
     addRecipient(newName, newEmail, newCourse);
+    AuditService.logEvent({
+      action: 'RECIPIENT_CREATED',
+      userId: '',
+      entityType: 'recipient',
+      entityId: `rec_${Date.now()}`,
+      metadata: { name: newName, email: newEmail, course: newCourse }
+    });
     setNewName('');
     setNewEmail('');
     setNewCourse('');

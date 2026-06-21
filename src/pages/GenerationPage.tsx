@@ -6,6 +6,7 @@ import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { computeCertificateHash } from '../utils/crypto';
 import { EmailService } from '../services/email.service';
+import { AuditService } from '../services/audit.service';
 import { generateCertificatePDF } from '../utils/pdf';
 import JSZip from 'jszip';
 
@@ -119,6 +120,20 @@ export default function GenerationPage() {
           });
           addLog(`✓ Registered & Signed metadata in Firestore`);
 
+          // Log CERTIFICATE_GENERATED event
+          AuditService.logEvent({
+            action: 'CERTIFICATE_GENERATED',
+            userId: '',
+            entityType: 'certificate',
+            entityId: certId,
+            metadata: {
+              name: recipient.name,
+              email: recipient.email,
+              course: recipient.course || certSettings.course,
+              title: certSettings.title
+            }
+          });
+
           // 5. Send EmailJS notification
           addLog(`Sending EmailJS template to ${recipient.email}...`);
           await EmailService.sendCertificateEmail({
@@ -132,6 +147,23 @@ export default function GenerationPage() {
           }, emailSettings);
 
           addLog(`✓ Emailed successfully`);
+          
+          // Log EMAIL_SENT and EMAIL_DELIVERED
+          AuditService.logEvent({
+            action: 'EMAIL_SENT',
+            userId: '',
+            entityType: 'certificate',
+            entityId: certId,
+            metadata: { email: recipient.email }
+          });
+          AuditService.logEvent({
+            action: 'EMAIL_DELIVERED',
+            userId: '',
+            entityType: 'certificate',
+            entityId: certId,
+            metadata: { email: recipient.email }
+          });
+
           updateRecipient(recipient.id, { status: 'sent', certId, error: null });
         }
       } catch (err: any) {
@@ -139,6 +171,15 @@ export default function GenerationPage() {
         const errorMsg = err.text || err.message || 'Generation or delivery failed';
         updateRecipient(recipient.id, { status: 'failed', error: errorMsg });
         addLog(`✗ ${recipient.name} — Failed: ${errorMsg}`);
+        
+        // Log EMAIL_FAILED
+        AuditService.logEvent({
+          action: 'EMAIL_FAILED',
+          userId: '',
+          entityType: 'certificate',
+          entityId: certId,
+          metadata: { email: recipient.email, error: errorMsg }
+        });
       }
 
       setProcessedCount(i + 1);

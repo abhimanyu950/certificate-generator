@@ -63,5 +63,13 @@ service cloud.firestore {
       allow read: if isSignedIn() && isNotDisabled();
       allow write: if isIssuer();
     }
+
+    // Rules for audit_logs collection
+    match /audit_logs/{logId} {
+      allow create: if true;
+      allow read: if isSignedIn() && isNotDisabled();
+      allow update, delete: if isSuperAdmin();
+    }
   }
 }
+

@@ -3,6 +3,7 @@ import { useDesignerStore } from '../store/designerStore';
 import { saveTemplate, deleteTemplate, getTemplates, type TemplateData } from '../services/certificates';
 import { storage } from '../services/firebase';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { AuditService } from '../services/audit.service';
 
 // Fonts lists
 const fontFamilies = [
@@ -250,13 +251,24 @@ export default function DesignerPage() {
   const handleDuplicateTemplate = async (tpl: TemplateData) => {
     try {
       const newId = `tpl_${Date.now()}`;
+      const newName = `${tpl.name} (Copy)`;
       await saveTemplate({
         ...tpl,
         id: newId,
-        name: `${tpl.name} (Copy)`,
+        name: newName,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
+      
+      // Log TEMPLATE_CREATED event
+      AuditService.logEvent({
+        action: 'TEMPLATE_CREATED',
+        userId: '',
+        entityType: 'template',
+        entityId: newId,
+        metadata: { name: newName, duplicatedFrom: tpl.id }
+      });
+
       alert('Template duplicated successfully!');
       loadDbTemplatesList();
     } catch (e) {
@@ -268,6 +280,16 @@ export default function DesignerPage() {
     if (confirm('Are you sure you want to delete this template permanently?')) {
       try {
         await deleteTemplate(id);
+        
+        // Log TEMPLATE_DELETED event
+        AuditService.logEvent({
+          action: 'TEMPLATE_DELETED',
+          userId: '',
+          entityType: 'template',
+          entityId: id,
+          metadata: {}
+        });
+
         if (activeTemplateId === id) {
           setActiveTemplateId(null);
           setActiveTemplateName('');
@@ -563,6 +585,7 @@ export default function DesignerPage() {
 
   // Save/Update template in database
   const handleSave = async (overwrite: boolean = false) => {
+    const isNew = !(overwrite && activeTemplateId);
     const templateId = overwrite && activeTemplateId ? activeTemplateId : `tpl_${Date.now()}`;
     const templateName = activeTemplateName || certSettings.title || 'Untitled Template';
 
@@ -581,6 +604,16 @@ export default function DesignerPage() {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
+
+      // Log TEMPLATE_CREATED or TEMPLATE_UPDATED event
+      AuditService.logEvent({
+        action: isNew ? 'TEMPLATE_CREATED' : 'TEMPLATE_UPDATED',
+        userId: '',
+        entityType: 'template',
+        entityId: templateId,
+        metadata: { name: templateName }
+      });
+
       setActiveTemplateId(templateId);
       setActiveTemplateName(templateName);
       updateCertSettings({ title: templateName });

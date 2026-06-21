@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { verifyCertificate } from '../services/verification';
 import type { VerificationResult } from '../services/verification';
 import { downloadPDFBlob } from '../utils/pdf';
+import { AuditService } from '../services/audit.service';
 
 export default function VerificationPage() {
   const [searchParams] = useSearchParams();
@@ -23,6 +24,21 @@ export default function VerificationPage() {
     const check = await verifyCertificate(id.trim());
     setResult(check);
     setIsValidating(false);
+
+    // Log CERTIFICATE_VERIFIED event
+    AuditService.logEvent({
+      action: 'CERTIFICATE_VERIFIED',
+      userId: '',
+      entityType: 'certificate',
+      entityId: id.trim(),
+      metadata: {
+        isValid: check.isValid,
+        status: check.status,
+        recipientName: check.certificateData?.name || 'unknown',
+        course: check.certificateData?.course || 'unknown',
+        reason: check.reason || ''
+      }
+    });
   };
 
   useEffect(() => {
@@ -38,22 +54,39 @@ export default function VerificationPage() {
   };
 
   const handleDownloadPDF = () => {
-    if (!result?.certificateData?.pdf_base64) return;
-    
-    let base64Data = result.certificateData.pdf_base64;
-    if (base64Data.startsWith('data:application/pdf;base64,')) {
-      base64Data = base64Data.split(',')[1];
+    const certData = result?.certificateData;
+    if (!certData) return;
+
+    // Log CERTIFICATE_DOWNLOADED event
+    AuditService.logEvent({
+      action: 'CERTIFICATE_DOWNLOADED',
+      userId: '',
+      entityType: 'certificate',
+      entityId: certData.certId,
+      metadata: {
+        name: certData.name,
+        course: certData.course
+      }
+    });
+
+    if (certData.pdf_base64) {
+      let base64Data = certData.pdf_base64;
+      if (base64Data.startsWith('data:application/pdf;base64,')) {
+        base64Data = base64Data.split(',')[1];
+      }
+      
+      const binaryStr = window.atob(base64Data);
+      const len = binaryStr.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+      
+      const blob = new Blob([bytes], { type: 'application/pdf' });
+      downloadPDFBlob(blob, `Certificate_${certData.name}`);
+    } else if (certData.downloadUrl) {
+      window.open(certData.downloadUrl, '_blank');
     }
-    
-    const binaryStr = window.atob(base64Data);
-    const len = binaryStr.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryStr.charCodeAt(i);
-    }
-    
-    const blob = new Blob([bytes], { type: 'application/pdf' });
-    downloadPDFBlob(blob, `Certificate_${result.certificateData.name}`);
   };
 
   return (
@@ -128,7 +161,7 @@ export default function VerificationPage() {
               </div>
 
               <div className="flex gap-2 justify-center">
-                {result.certificateData.pdf_base64 && (
+                {(result.certificateData.pdf_base64 || result.certificateData.downloadUrl) && (
                   <button
                     onClick={handleDownloadPDF}
                     className="flex-1 bg-secondary text-white font-bold py-2.5 rounded-lg shadow-md hover:opacity-90 transition-all flex items-center justify-center gap-1.5"

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { AuthService } from '../services/auth.service';
+import { AuditService } from '../services/audit.service';
 import type { UserProfile } from '../firebase/firestore';
 
 interface AuthState {
@@ -24,9 +25,29 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       const profile = await AuthService.emailLogin(email, pass);
       set({ user: profile, isAuthenticated: true, isLoading: false });
+      
+      // Log LOGIN_SUCCESS asynchronously
+      AuditService.logEvent({
+        action: 'LOGIN_SUCCESS',
+        userId: profile.uid,
+        entityType: 'user',
+        entityId: profile.uid,
+        metadata: { email: profile.email, name: profile.name, role: profile.role }
+      });
+
       return profile;
-    } catch (e) {
+    } catch (e: any) {
       set({ isLoading: false });
+      
+      // Log LOGIN_FAILED asynchronously
+      AuditService.logEvent({
+        action: 'LOGIN_FAILED',
+        userId: 'anonymous',
+        entityType: 'user',
+        entityId: email,
+        metadata: { email, error: e.message || String(e) }
+      });
+
       throw e;
     }
   },
@@ -36,18 +57,49 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       const profile = await AuthService.googleSignIn();
       set({ user: profile, isAuthenticated: true, isLoading: false });
+      
+      // Log LOGIN_SUCCESS asynchronously
+      AuditService.logEvent({
+        action: 'LOGIN_SUCCESS',
+        userId: profile.uid,
+        entityType: 'user',
+        entityId: profile.uid,
+        metadata: { email: profile.email, name: profile.name, role: profile.role, method: 'google' }
+      });
+
       return profile;
-    } catch (e) {
+    } catch (e: any) {
       set({ isLoading: false });
+      
+      // Log LOGIN_FAILED asynchronously
+      AuditService.logEvent({
+        action: 'LOGIN_FAILED',
+        userId: 'anonymous',
+        entityType: 'user',
+        entityId: 'google_oauth',
+        metadata: { error: e.message || String(e) }
+      });
+
       throw e;
     }
   },
 
   signOut: async () => {
     set({ isLoading: true });
+    const currentUserId = useAuthStore.getState().user?.uid || 'unknown';
+    const currentUserEmail = useAuthStore.getState().user?.email || 'unknown';
     try {
       await AuthService.logout();
       set({ user: null, isAuthenticated: false, isLoading: false });
+      
+      // Log LOGOUT asynchronously
+      AuditService.logEvent({
+        action: 'LOGOUT',
+        userId: currentUserId,
+        entityType: 'user',
+        entityId: currentUserId,
+        metadata: { email: currentUserEmail }
+      });
     } catch (e) {
       set({ isLoading: false });
       throw e;

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { 
   ResponsiveContainer, 
   BarChart, 
@@ -6,24 +7,91 @@ import {
   Tooltip, 
   Legend 
 } from 'recharts';
-
-const doubleChartData = [
-  { month: 'Jan', Issuance: 12000, Verifications: 8000 },
-  { month: 'Feb', Issuance: 18000, Verifications: 11000 },
-  { month: 'Mar', Issuance: 14000, Verifications: 9000 },
-  { month: 'Apr', Issuance: 24000, Verifications: 16000 },
-  { month: 'May', Issuance: 31000, Verifications: 20000 },
-  { month: 'Jun', Issuance: 42000, Verifications: 28000 },
-  { month: 'Jul', Issuance: 45000, Verifications: 31000 }
-];
+import { db } from '../services/firebase';
+import { collection, onSnapshot, getDocs, limit, query } from 'firebase/firestore';
+import { AnalyticsService, MonthlyTrend, TemplateStat, ActiveUser } from '../services/analytics.service';
 
 export default function AnalyticsPage() {
-  const regions = [
-    { rank: '01', name: 'North America', count: '412k' },
-    { rank: '02', name: 'Europe', count: '385k' },
-    { rank: '03', name: 'Asia Pacific', count: '291k' },
-    { rank: '04', name: 'LATAM', count: '115k' }
-  ];
+  const [totalIssuance, setTotalIssuance] = useState<number>(0);
+  const [verificationRate, setVerificationRate] = useState<number>(0);
+  const [emailSuccessRate, setEmailSuccessRate] = useState<number>(100);
+  const [dbLatency, setDbLatency] = useState<string>('24ms');
+  const [chartData, setChartData] = useState<MonthlyTrend[]>([]);
+  const [emailSentCount, setEmailSentCount] = useState<number>(0);
+  const [emailFailedCount, setEmailFailedCount] = useState<number>(0);
+  const [topTemplates, setTopTemplates] = useState<TemplateStat[]>([]);
+  const [activeUsers, setActiveUsers] = useState<ActiveUser[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  // Measure Firestore latency
+  const measureLatency = async () => {
+    try {
+      const start = Date.now();
+      const q = query(collection(db, 'templates'), limit(1));
+      await getDocs(q);
+      const diff = Date.now() - start;
+      setDbLatency(`${diff}ms`);
+    } catch (e) {
+      console.warn('Failed to measure Firestore latency:', e);
+    }
+  };
+
+  useEffect(() => {
+    measureLatency();
+
+    // 1. Subscribe to certificates collection changes
+    const unsubCerts = onSnapshot(collection(db, 'certificates'), async () => {
+      try {
+        const total = await AnalyticsService.getTotalCertificates();
+        setTotalIssuance(total);
+
+        const doubleChart = await AnalyticsService.getMonthlyIssuance();
+        setChartData(doubleChart);
+
+        const templateStats = await AnalyticsService.getTemplateStatistics();
+        setTopTemplates(templateStats);
+      } catch (err) {
+        console.error('Error fetching certificates analytics:', err);
+      }
+    });
+
+    // 2. Subscribe to audit logs collection changes
+    const unsubLogs = onSnapshot(collection(db, 'audit_logs'), async () => {
+      try {
+        const verifData = await AnalyticsService.getVerificationRate();
+        setVerificationRate(verifData.rate);
+
+        const emailData = await AnalyticsService.getEmailMetrics();
+        setEmailSuccessRate(emailData.successRate);
+        setEmailSentCount(emailData.totalSent);
+        setEmailFailedCount(emailData.totalFailed);
+
+        const activeUsrs = await AnalyticsService.getMostActiveUsers();
+        setActiveUsers(activeUsrs);
+        
+        // Periodic latency check
+        measureLatency();
+      } catch (err) {
+        console.error('Error fetching logs analytics:', err);
+      } finally {
+        setIsLoading(false);
+      }
+    });
+
+    return () => {
+      unsubCerts();
+      unsubLogs();
+    };
+  }, []);
+
+  if (isLoading && totalIssuance === 0 && activeUsers.length === 0) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px] text-xs text-on-surface-variant">
+        <div className="w-8 h-8 border-4 border-secondary border-t-transparent rounded-full animate-spin mr-3"></div>
+        <span>Compiling real-time system performance audits...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -34,7 +102,7 @@ export default function AnalyticsPage() {
           <p className="text-xs text-on-surface-variant">Visualizing credential integrity and distribution flow across global nodes.</p>
         </div>
         <button
-          onClick={() => alert('Report download queued...')}
+          onClick={() => alert('Feature incoming: Generating PDF Annual Audit Report...')}
           className="flex items-center gap-1.5 px-4 py-2 bg-secondary hover:opacity-90 active:scale-95 text-white font-bold rounded-lg text-xs shadow-md"
         >
           <span className="material-symbols-outlined text-sm">download</span>
@@ -45,10 +113,10 @@ export default function AnalyticsPage() {
       {/* Top Tier Metrics */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: 'Total Issuance', val: '1.28M', icon: 'workspace_premium', color: 'text-secondary' },
-          { label: 'Verification Rate', val: '94.2%', icon: 'verified', color: 'text-green-600' },
-          { label: 'Avg. Open Rate', val: '68.5%', icon: 'mail', color: 'text-blue-600' },
-          { label: 'Server Latency', val: '24ms', icon: 'bolt', color: 'text-on-surface-variant' }
+          { label: 'Total Issuance', val: totalIssuance.toLocaleString(), icon: 'workspace_premium', color: 'text-secondary' },
+          { label: 'Verification Rate', val: `${verificationRate.toFixed(1)}%`, icon: 'verified', color: 'text-green-600' },
+          { label: 'Email Success Rate', val: `${emailSuccessRate.toFixed(1)}%`, icon: 'mail', color: 'text-blue-600' },
+          { label: 'DB Read Latency', val: dbLatency, icon: 'bolt', color: 'text-on-surface-variant' }
         ].map((m, i) => (
           <div key={i} className="bg-white border border-outline-variant rounded-xl p-5 shadow-sm">
             <div className="flex justify-between items-center text-on-surface-variant">
@@ -68,38 +136,45 @@ export default function AnalyticsPage() {
           <p className="text-on-surface-variant mb-6">Comparative analysis of certificate creation and successful validation audits.</p>
           
           <div className="h-64 w-full pr-4">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={doubleChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: '#45464d' }} />
-                <Tooltip cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
-                <Legend iconSize={10} wrapperStyle={{ fontSize: 10, paddingBottom: 10 }} />
-                <Bar dataKey="Issuance" fill="#712ae2" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Verifications" fill="#c6c6cd" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            {chartData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: '#45464d' }} />
+                  <Tooltip cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
+                  <Legend iconSize={10} wrapperStyle={{ fontSize: 10, paddingBottom: 10 }} />
+                  <Bar dataKey="Issuance" fill="#712ae2" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Verifications" fill="#c6c6cd" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex items-center justify-center text-on-surface-variant opacity-60">
+                No monthly trends available.
+              </div>
+            )}
           </div>
         </div>
 
         {/* Deliverability Statistics Card */}
         <div className="bg-white border border-outline-variant rounded-xl p-5 shadow-sm text-xs flex flex-col justify-between">
           <div>
-            <h3 className="font-bold text-sm text-on-surface mb-1">Delivery Performance</h3>
-            <p className="text-on-surface-variant mb-6">Email throughput efficiency tracking metrics.</p>
+            <h3 className="font-bold text-sm text-on-surface mb-1">Email Delivery Performance</h3>
+            <p className="text-on-surface-variant mb-6">Email throughput and service success tracking metrics.</p>
             
             <div className="space-y-4">
               {[
-                { label: 'Successful Deliveries', percentage: 99.8 },
-                { label: 'Unique Opens', percentage: 68.5 },
-                { label: 'Credentials Claimed', percentage: 54.2 },
-                { label: 'Social Sharing Ratio', percentage: 32.1 }
+                { label: 'Successful Dispatches', percentage: Math.round(emailSuccessRate), value: `${emailSentCount} sent` },
+                { label: 'Failed Transmissions', percentage: Math.round(100 - emailSuccessRate), value: `${emailFailedCount} failed` }
               ].map((p, i) => (
                 <div key={i} className="space-y-1">
                   <div className="flex justify-between font-semibold">
                     <span className="text-on-surface-variant">{p.label}</span>
-                    <span className="font-label-code">{p.percentage}%</span>
+                    <span className="font-label-code">{p.value} ({p.percentage}%)</span>
                   </div>
                   <div className="h-1.5 bg-surface-container rounded-full overflow-hidden">
-                    <div className="h-full bg-secondary" style={{ width: `${p.percentage}%` }}></div>
+                    <div 
+                      className={`h-full ${i === 0 ? 'bg-secondary' : 'bg-red-500'}`} 
+                      style={{ width: `${p.percentage}%` }}
+                    ></div>
                   </div>
                 </div>
               ))}
@@ -111,7 +186,7 @@ export default function AnalyticsPage() {
               <span className="material-symbols-outlined text-sm font-bold">trending_up</span>
             </div>
             <span className="text-[11px] text-on-surface-variant">
-              Deliverability ratio is <strong className="text-on-surface">4.2% higher</strong> than standard industry baselines.
+              Delivery metrics are synced in real-time with browser-level dispatch logging.
             </span>
           </div>
         </div>
@@ -119,42 +194,68 @@ export default function AnalyticsPage() {
 
       {/* Global Heatmap and Leaderboard */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        <div className="lg:col-span-3 bg-white border border-outline-variant rounded-xl p-5 h-[340px] flex flex-col shadow-sm relative overflow-hidden text-xs">
-          <div>
-            <h3 className="font-bold text-sm text-on-surface mb-1">Global Heatmap</h3>
-            <p className="text-on-surface-variant">Real-time certificate distribution by geographic region.</p>
-          </div>
-          <div className="flex-1 bg-surface-container-low/40 rounded-xl mt-4 flex items-center justify-center relative select-none">
-            {/* World Map Overlay Graphics */}
-            <span className="text-4xl text-on-surface-variant opacity-15">MAP DATA VISUALIZATION AREA</span>
-            
-            {/* Animated Pulse Points */}
-            <div className="absolute top-[30%] left-[20%] w-4 h-4 bg-secondary rounded-full dot-pulse shadow-[0_0_15px_rgba(113,42,226,0.6)]"></div>
-            <div className="absolute top-[45%] left-[55%] w-3 h-3 bg-secondary rounded-full dot-pulse shadow-[0_0_10px_rgba(113,42,226,0.4)]"></div>
-            <div className="absolute top-[25%] left-[80%] w-5 h-5 bg-secondary rounded-full dot-pulse shadow-[0_0_20px_rgba(113,42,226,0.8)]"></div>
+        {/* Most Active Admins / Users Leaderboard */}
+        <div className="lg:col-span-2 bg-white border border-outline-variant rounded-xl p-5 shadow-sm text-xs flex flex-col">
+          <h3 className="font-bold text-sm text-on-surface mb-1">Most Active Operators</h3>
+          <p className="text-on-surface-variant mb-4">Top database contributors based on logged audit actions.</p>
+          <div className="flex-1 overflow-x-auto">
+            {activeUsers.length > 0 ? (
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-outline-variant/60 font-label-code text-[10px] text-on-surface-variant uppercase font-bold">
+                    <th className="pb-2">Operator</th>
+                    <th className="pb-2">Role</th>
+                    <th className="pb-2 text-right">Actions Count</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-outline-variant/30">
+                  {activeUsers.map((u, idx) => (
+                    <tr key={idx} className="hover:bg-surface-container-low/20">
+                      <td className="py-2.5">
+                        <p className="font-bold text-on-surface">{u.name}</p>
+                        <p className="text-[10px] text-on-surface-variant">{u.email}</p>
+                      </td>
+                      <td className="py-2.5">
+                        <span className="px-1.5 py-0.5 bg-surface-container text-on-surface-variant rounded text-[9px] font-mono uppercase font-bold">
+                          {u.role}
+                        </span>
+                      </td>
+                      <td className="py-2.5 text-right font-bold text-secondary">{u.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="h-full flex items-center justify-center text-on-surface-variant opacity-60 py-6">
+                No active operator records available.
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="bg-white border border-outline-variant rounded-xl p-5 flex flex-col shadow-sm text-xs justify-between">
+        {/* Top Templates Leaderboard */}
+        <div className="lg:col-span-2 bg-white border border-outline-variant rounded-xl p-5 flex flex-col shadow-sm text-xs justify-between">
           <div>
-            <h3 className="font-bold text-sm text-on-surface mb-6">Top Regions</h3>
-            <div className="space-y-5">
-              {regions.map(r => (
-                <div key={r.rank} className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="font-label-code text-on-surface-variant font-bold">{r.rank}</span>
-                    <span className="font-medium text-on-surface">{r.name}</span>
+            <h3 className="font-bold text-sm text-on-surface mb-1">Top Templates</h3>
+            <p className="text-on-surface-variant mb-4">Most frequently used design structures.</p>
+            <div className="space-y-4">
+              {topTemplates.length > 0 ? (
+                topTemplates.map(t => (
+                  <div key={t.rank} className="flex items-center justify-between border-b pb-2 border-outline-variant/20 last:border-0 last:pb-0">
+                    <div className="flex items-center gap-3">
+                      <span className="font-label-code text-on-surface-variant font-bold">{t.rank}</span>
+                      <span className="font-medium text-on-surface">{t.name}</span>
+                    </div>
+                    <span className="font-label-code font-bold text-secondary">{t.count} issued</span>
                   </div>
-                  <span className="font-label-code font-bold text-secondary">{r.count}</span>
+                ))
+              ) : (
+                <div className="text-center py-6 text-on-surface-variant opacity-60">
+                  No certificates issued yet to rank templates.
                 </div>
-              ))}
+              )}
             </div>
           </div>
-          
-          <button className="w-full py-2 border border-outline hover:bg-surface-container rounded-lg font-bold text-[11px] mt-6 flex justify-center items-center gap-1 text-on-surface">
-            View Regional Details
-            <span className="material-symbols-outlined text-xs">arrow_forward</span>
-          </button>
         </div>
       </div>
     </div>

@@ -9,59 +9,183 @@ import {
   AreaChart, 
   Area 
 } from 'recharts';
-import { useRecipientStore } from '../store/recipientStore';
-import { getCertificatesLog } from '../services/certificates';
-
-// High-fidelity analytics datasets
-const trendsData = [
-  { month: 'Jan', Issued: 12000, Verified: 8000 },
-  { month: 'Feb', Issued: 18000, Verified: 11000 },
-  { month: 'Mar', Issued: 14000, Verified: 9000 },
-  { month: 'Apr', Issued: 24000, Verified: 16000 },
-  { month: 'May', Issued: 31000, Verified: 20000 },
-  { month: 'Jun', Issued: 42000, Verified: 28000 }
-];
-
-const trafficData = [
-  { time: '10:00', count: 40 },
-  { time: '11:00', count: 25 },
-  { time: '12:00', count: 68 },
-  { time: '13:00', count: 32 },
-  { time: '14:00', count: 90 },
-  { time: '15:00', count: 42 },
-  { time: '16:00', count: 55 },
-  { time: '17:00', count: 38 },
-  { time: '18:00', count: 85 }
-];
+import { db } from '../services/firebase';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { AnalyticsService } from '../services/analytics.service';
 
 export default function DashboardPage() {
-  const { recipients } = useRecipientStore();
-  const [issuedCount, setIssuedCount] = useState(1284000);
+  const [issuedCount, setIssuedCount] = useState<number>(0);
+  const [verifiedCount, setVerifiedCount] = useState<number>(0);
+  const [verificationRate, setVerificationRate] = useState<number>(0);
+  const [emailSuccessRate, setEmailSuccessRate] = useState<number>(100);
+  const [trends, setTrends] = useState<any[]>([]);
+  const [traffic, setTraffic] = useState<any[]>([]);
   const [recentLogs, setRecentLogs] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
   useEffect(() => {
-    // Large counter animate-up logic from static template
-    let current = 1284000;
-    const target = 1284092 + recipients.length; // Add imported count
-    const increment = Math.ceil((target - current) / 20);
-    const timer = setInterval(() => {
-      current += increment;
-      if (current >= target) {
-        current = target;
-        clearInterval(timer);
+    // 1. Subscribe to certificates collection changes
+    const unsubCerts = onSnapshot(collection(db, 'certificates'), async () => {
+      try {
+        const total = await AnalyticsService.getTotalCertificates();
+        setIssuedCount(total);
+        
+        const monthlyTrends = await AnalyticsService.getMonthlyIssuance();
+        setTrends(monthlyTrends);
+      } catch (err) {
+        console.error('Error fetching certificates stats:', err);
       }
-      setIssuedCount(current);
-    }, 25);
-    return () => clearInterval(timer);
-  }, [recipients]);
+    });
 
-  useEffect(() => {
-    const fetchLogs = async () => {
-      const logs = await getCertificatesLog(5);
-      setRecentLogs(logs);
+    // 2. Subscribe to audit logs collection changes
+    const unsubLogs = onSnapshot(collection(db, 'audit_logs'), async () => {
+      try {
+        const verifData = await AnalyticsService.getVerificationRate();
+        setVerifiedCount(verifData.totalVerified);
+        setVerificationRate(verifData.rate);
+
+        const emailData = await AnalyticsService.getEmailMetrics();
+        setEmailSuccessRate(emailData.successRate);
+
+        const recent = await AnalyticsService.getRecentActivity(5);
+        setRecentLogs(recent);
+
+        const trafficData = await AnalyticsService.getVerificationTraffic();
+        setTraffic(trafficData);
+      } catch (err) {
+        console.error('Error fetching audit logs stats:', err);
+      } finally {
+        setIsLoading(false);
+      }
+    });
+
+    return () => {
+      unsubCerts();
+      unsubLogs();
     };
-    fetchLogs();
   }, []);
+
+  const renderLogActivity = (log: any) => {
+    let icon = 'info';
+    let title = 'System Activity';
+    let desc = 'An event occurred in the system.';
+    let tagColor = 'bg-surface-container-high text-on-surface-variant';
+    let tagText = 'EVENT';
+
+    switch (log.action) {
+      case 'CERTIFICATE_GENERATED':
+        icon = 'auto_awesome';
+        title = 'Certificate issued';
+        desc = `Issued to ${log.metadata?.name || 'unknown'} (${log.metadata?.email || ''}) for ${log.metadata?.course || ''}.`;
+        tagColor = 'bg-green-100 text-green-700';
+        tagText = 'SUCCESS';
+        break;
+      case 'CERTIFICATE_VERIFIED':
+        icon = log.metadata?.isValid ? 'verified' : 'gpp_maybe';
+        title = 'Verification check';
+        desc = `Certificate ${log.entityId} check result: ${log.metadata?.isValid ? 'VALID' : 'FAILED/INVALID'} (${log.metadata?.reason || 'Verified'}).`;
+        tagColor = log.metadata?.isValid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700';
+        tagText = log.metadata?.isValid ? 'VALID' : 'ALERT';
+        break;
+      case 'CERTIFICATE_DOWNLOADED':
+        icon = 'download';
+        title = 'Certificate PDF downloaded';
+        desc = `PDF downloaded for certificate ${log.entityId} (${log.metadata?.name || ''}).`;
+        tagColor = 'bg-blue-100 text-blue-700';
+        tagText = 'DOWNLOAD';
+        break;
+      case 'EMAIL_SENT':
+      case 'EMAIL_DELIVERED':
+        icon = 'mail';
+        title = 'Email dispatched';
+        desc = `Email notifications sent to ${log.metadata?.email || ''}.`;
+        tagColor = 'bg-green-50 text-green-700';
+        tagText = 'EMAIL';
+        break;
+      case 'EMAIL_FAILED':
+        icon = 'mail_lock';
+        title = 'Email dispatch failed';
+        desc = `Failed to email ${log.metadata?.email || ''}: ${log.metadata?.error || 'unknown error'}.`;
+        tagColor = 'bg-red-100 text-red-700';
+        tagText = 'FAILED';
+        break;
+      case 'TEMPLATE_CREATED':
+      case 'TEMPLATE_UPDATED':
+        icon = 'palette';
+        title = log.action === 'TEMPLATE_CREATED' ? 'Template created' : 'Template updated';
+        desc = `Design template '${log.metadata?.name || 'Untitled'}' saved in Firestore.`;
+        tagColor = 'bg-blue-50 text-blue-700';
+        tagText = 'TEMPLATE';
+        break;
+      case 'TEMPLATE_DELETED':
+        icon = 'delete';
+        title = 'Template deleted';
+        desc = `Template ${log.entityId} was permanently deleted.`;
+        tagColor = 'bg-red-100 text-red-700';
+        tagText = 'DELETED';
+        break;
+      case 'RECIPIENT_CREATED':
+        icon = 'person_add';
+        title = 'Recipient added';
+        desc = `Recipient ${log.metadata?.name || ''} (${log.metadata?.email || ''}) was added to roster.`;
+        tagColor = 'bg-amber-100 text-amber-700';
+        tagText = 'RECIPIENT';
+        break;
+      case 'RECIPIENT_IMPORTED':
+        icon = 'upload_file';
+        title = 'CSV bulk import';
+        desc = `Imported ${log.metadata?.count || 0} recipients successfully.`;
+        tagColor = 'bg-amber-100 text-amber-700';
+        tagText = 'IMPORT';
+        break;
+      case 'LOGIN_SUCCESS':
+        icon = 'login';
+        title = 'User signed in';
+        desc = `Admin session started for user ${log.metadata?.email || log.userId}.`;
+        tagColor = 'bg-purple-100 text-purple-700';
+        tagText = 'SESSION';
+        break;
+      case 'LOGIN_FAILED':
+        icon = 'lock';
+        title = 'Sign in failed';
+        desc = `Failed login attempt for user ${log.metadata?.email || log.entityId || ''}.`;
+        tagColor = 'bg-red-100 text-red-700';
+        tagText = 'SECURITY';
+        break;
+      case 'LOGOUT':
+        icon = 'logout';
+        title = 'User signed out';
+        desc = `Session ended for user ${log.metadata?.email || log.userId}.`;
+        tagColor = 'bg-purple-100 text-purple-700';
+        tagText = 'SESSION';
+        break;
+    }
+
+    return (
+      <div key={log.id} className="flex gap-4 items-start relative z-10">
+        <div className={`${tagColor} p-2 rounded-full shrink-0 flex items-center justify-center`}>
+          <span className="material-symbols-outlined text-sm">{icon}</span>
+        </div>
+        <div className="flex-1 text-xs">
+          <p className="font-semibold text-on-surface">{title}</p>
+          <p className="text-on-surface-variant mt-0.5">{desc}</p>
+          <span className="text-[10px] text-on-surface-variant opacity-60 mt-1 block">
+            {log.timestamp ? new Date(log.timestamp).toLocaleString() : 'Just now'}
+          </span>
+        </div>
+        <div className={`px-2 py-0.5 rounded ${tagColor} text-[9px] font-bold`}>{tagText}</div>
+      </div>
+    );
+  };
+
+  if (isLoading && issuedCount === 0 && recentLogs.length === 0) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px] text-xs text-on-surface-variant">
+        <div className="w-8 h-8 border-4 border-secondary border-t-transparent rounded-full animate-spin mr-3"></div>
+        <span>Syncing live dashboard metrics...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 md:p-6 space-y-6">
@@ -77,7 +201,7 @@ export default function DashboardPage() {
             </h3>
             <div className="flex items-center gap-1.5 mt-2 text-green-600">
               <span className="material-symbols-outlined text-[14px]">trending_up</span>
-              <span className="text-xs font-bold">+12.4% from last month</span>
+              <span className="text-xs font-bold">Real-time database sync active</span>
             </div>
           </div>
           <div className="absolute right-0 top-0 bottom-0 w-32 opacity-10 pointer-events-none group-hover:opacity-20 transition-opacity">
@@ -92,8 +216,8 @@ export default function DashboardPage() {
             </div>
             <p className="text-xs text-on-surface-variant font-semibold">Certificates Verified</p>
           </div>
-          <h4 className="text-xl font-bold text-on-surface">842,109</h4>
-          <p className="text-[10px] text-on-surface-variant mt-1">Verification Rate: 65.5%</p>
+          <h4 className="text-xl font-bold text-on-surface">{verifiedCount.toLocaleString()}</h4>
+          <p className="text-[10px] text-on-surface-variant mt-1">Verification Rate: {verificationRate.toFixed(1)}%</p>
         </div>
 
         <div className="bg-white border border-outline-variant rounded-2xl p-5 flex flex-col justify-center shadow-sm min-h-[120px]">
@@ -103,9 +227,9 @@ export default function DashboardPage() {
             </div>
             <p className="text-xs text-on-surface-variant font-semibold">Email Delivery Success</p>
           </div>
-          <h4 className="text-xl font-bold text-on-surface">99.82%</h4>
+          <h4 className="text-xl font-bold text-on-surface">{emailSuccessRate.toFixed(2)}%</h4>
           <div className="w-full bg-surface-container-low h-1.5 rounded-full mt-3 overflow-hidden">
-            <div className="bg-green-600 h-full rounded-full" style={{ width: '99.82%' }}></div>
+            <div className="bg-green-600 h-full rounded-full" style={{ width: `${emailSuccessRate}%` }}></div>
           </div>
         </div>
       </section>
@@ -117,22 +241,27 @@ export default function DashboardPage() {
           <div className="flex justify-between items-center mb-6">
             <div>
               <h3 className="font-title-lg text-sm font-bold text-on-surface">Monthly Issuance Trends</h3>
-              <p className="text-xs text-on-surface-variant">Jan 2024 - Jun 2024</p>
+              <p className="text-xs text-on-surface-variant">Active Year-To-Date Issuances</p>
             </div>
             <div className="flex gap-1">
-              <button className="px-3 py-1 bg-surface-container-low text-[10px] font-bold rounded-lg border border-outline-variant">WEEKLY</button>
               <button className="px-3 py-1 bg-secondary text-white text-[10px] font-bold rounded-lg">MONTHLY</button>
             </div>
           </div>
           
           <div className="h-[240px] md:h-[280px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={trendsData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: '#45464d' }} />
-                <Tooltip cursor={{ fill: 'rgba(0,0,0,0.02)' }} />
-                <Bar dataKey="Issued" fill="#712ae2" radius={[4, 4, 0, 0]} barSize={24} />
-              </BarChart>
-            </ResponsiveContainer>
+            {trends.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={trends} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: '#45464d' }} />
+                  <Tooltip cursor={{ fill: 'rgba(0,0,0,0.02)' }} />
+                  <Bar dataKey="Issued" fill="#712ae2" radius={[4, 4, 0, 0]} barSize={24} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex items-center justify-center text-xs text-on-surface-variant opacity-60">
+                No issuance trend data available yet.
+              </div>
+            )}
           </div>
         </div>
 
@@ -173,12 +302,18 @@ export default function DashboardPage() {
               <span className="text-[#acedff] text-[10px] font-bold animate-pulse">● LIVE</span>
             </div>
             <div className="h-16 w-full pr-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={trafficData} margin={{ top: 0, right: 0, left: -40, bottom: 0 }}>
-                  <Tooltip />
-                  <Area type="monotone" dataKey="count" stroke="#acedff" fill="rgba(172, 237, 255, 0.15)" strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
+              {traffic.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={traffic} margin={{ top: 0, right: 0, left: -40, bottom: 0 }}>
+                    <Tooltip contentStyle={{ backgroundColor: '#1a1c2e', borderColor: '#45464d', color: 'white' }} />
+                    <Area type="monotone" dataKey="count" stroke="#acedff" fill="rgba(172, 237, 255, 0.15)" strokeWidth={2} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-[10px] text-white opacity-40">
+                  No verification traffic recorded.
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -193,61 +328,11 @@ export default function DashboardPage() {
         
         <div className="space-y-6 relative before:absolute before:left-[19px] before:top-2 before:bottom-2 before:w-[2px] before:bg-outline-variant">
           {recentLogs.length > 0 ? (
-            recentLogs.map((log, idx) => (
-              <div key={log.id || idx} className="flex gap-4 items-start relative z-10">
-                <div className="bg-surface-container-high p-2 rounded-full text-secondary shrink-0 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-sm">auto_awesome</span>
-                </div>
-                <div className="flex-1 text-xs">
-                  <p className="font-semibold text-on-surface">Certificate issued</p>
-                  <p className="text-on-surface-variant mt-0.5">
-                    Issued to <strong>{log.name}</strong> ({log.email}) for {log.course}.
-                  </p>
-                  <span className="text-[10px] text-on-surface-variant opacity-60 mt-1 block">
-                    {new Date(log.issuedAt).toLocaleTimeString()}
-                  </span>
-                </div>
-                <div className="px-2 py-0.5 rounded bg-green-100 text-green-700 text-[9px] font-bold">SUCCESS</div>
-              </div>
-            ))
+            recentLogs.map((log) => renderLogActivity(log))
           ) : (
-            <>
-              <div className="flex gap-4 items-start relative z-10">
-                <div className="bg-purple-100 p-2 rounded-full text-secondary shrink-0 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-sm">auto_awesome</span>
-                </div>
-                <div className="flex-1 text-xs">
-                  <p className="font-semibold text-on-surface">Bulk generation completed</p>
-                  <p className="text-on-surface-variant mt-0.5">5,000 certificates issued for 'Q2 Professional Growth' campaign.</p>
-                  <span className="text-[10px] text-on-surface-variant opacity-60 mt-1 block">2 hours ago</span>
-                </div>
-                <div className="px-2 py-0.5 rounded bg-green-100 text-green-700 text-[9px] font-bold">SUCCESS</div>
-              </div>
-
-              <div className="flex gap-4 items-start relative z-10">
-                <div className="bg-blue-100 p-2 rounded-full text-blue-600 shrink-0 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-sm">palette</span>
-                </div>
-                <div className="flex-1 text-xs">
-                  <p className="font-semibold text-on-surface">New template created</p>
-                  <p className="text-on-surface-variant mt-0.5">Designer 'Sarah Jenkins' published 'Annual Award v2.0'.</p>
-                  <span className="text-[10px] text-on-surface-variant opacity-60 mt-1 block">5 hours ago</span>
-                </div>
-                <div className="px-2 py-0.5 rounded bg-blue-100 text-blue-700 text-[9px] font-bold">TEMPLATE</div>
-              </div>
-
-              <div className="flex gap-4 items-start relative z-10">
-                <div className="bg-red-100 p-2 rounded-full text-red-600 shrink-0 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-sm">security</span>
-                </div>
-                <div className="flex-1 text-xs">
-                  <p className="font-semibold text-on-surface">Verification check failed</p>
-                  <p className="text-on-surface-variant mt-0.5">Invalid certificate hash detected from IP: 192.168.1.1</p>
-                  <span className="text-[10px] text-on-surface-variant opacity-60 mt-1 block">Yesterday at 11:30 PM</span>
-                </div>
-                <div className="px-2 py-0.5 rounded bg-red-100 text-red-700 text-[9px] font-bold">ALERT</div>
-              </div>
-            </>
+            <div className="text-center py-6 text-xs text-on-surface-variant opacity-60">
+              No recent system activities logged.
+            </div>
           )}
         </div>
       </section>
