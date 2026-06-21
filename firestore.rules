@@ -1,0 +1,67 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper: Check if user is signed in
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    // Helper: Get user's role from the users collection
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    
+    // Helper: Check if user profile is disabled
+    function isNotDisabled() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.disabled != true;
+    }
+
+    // Helper: Role validation checks
+    function isSuperAdmin() {
+      return isSignedIn() && getUserRole() == 'Super Admin' && isNotDisabled();
+    }
+    
+    function isAdmin() {
+      return isSignedIn() && (getUserRole() == 'Admin' || getUserRole() == 'Super Admin') && isNotDisabled();
+    }
+    
+    function isIssuer() {
+      return isSignedIn() && (getUserRole() == 'Issuer' || getUserRole() == 'Admin' || getUserRole() == 'Super Admin') && isNotDisabled();
+    }
+    
+    function isViewer() {
+      return isSignedIn() && isNotDisabled();
+    }
+
+    // Rules for users collection
+    match /users/{userId} {
+      allow read: if isSignedIn() && isNotDisabled();
+      allow create: if isSuperAdmin();
+      allow update: if isSuperAdmin() || (
+        request.auth.uid == userId && 
+        isNotDisabled() && 
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'disabled'])
+      );
+      allow delete: if isSuperAdmin();
+    }
+
+    // Rules for templates collection
+    match /templates/{templateId} {
+      allow read: if isSignedIn() && isNotDisabled();
+      allow write: if isIssuer();
+    }
+
+    // Rules for certificates collection (public read for public verification page)
+    match /certificates/{certId} {
+      allow read: if true; 
+      allow write: if isIssuer();
+    }
+
+    // Rules for recipients collection
+    match /recipients/{recId} {
+      allow read: if isSignedIn() && isNotDisabled();
+      allow write: if isIssuer();
+    }
+  }
+}
