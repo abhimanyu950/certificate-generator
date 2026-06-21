@@ -19,15 +19,15 @@ service cloud.firestore {
 
     // Helper: Role validation checks
     function isSuperAdmin() {
-      return isSignedIn() && getUserRole() == 'Super Admin' && isNotDisabled();
+      return isSignedIn() && getUserRole() == 'super_admin' && isNotDisabled();
     }
     
     function isAdmin() {
-      return isSignedIn() && (getUserRole() == 'Admin' || getUserRole() == 'Super Admin') && isNotDisabled();
+      return isSignedIn() && (getUserRole() == 'admin' || getUserRole() == 'super_admin') && isNotDisabled();
     }
     
     function isIssuer() {
-      return isSignedIn() && (getUserRole() == 'Issuer' || getUserRole() == 'Admin' || getUserRole() == 'Super Admin') && isNotDisabled();
+      return isSignedIn() && (getUserRole() == 'issuer' || getUserRole() == 'admin' || getUserRole() == 'super_admin') && isNotDisabled();
     }
     
     function isViewer() {

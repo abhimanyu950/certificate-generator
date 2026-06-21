@@ -13,9 +13,16 @@ export default function UserManagementPage() {
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newName, setNewName] = useState('');
-  const [newRole, setNewRole] = useState<'Super Admin' | 'Admin' | 'Issuer' | 'Viewer'>('Viewer');
+  const [newRole, setNewRole] = useState<'super_admin' | 'admin' | 'issuer' | 'viewer'>('viewer');
   const [newOrg, setNewOrg] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+
+  // States for editing a user
+  const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editRole, setEditRole] = useState<'super_admin' | 'admin' | 'issuer' | 'viewer'>('viewer');
+  const [editOrg, setEditOrg] = useState('');
+  const [isEditing, setIsEditing] = useState(false);
 
   // Fetch all users
   const fetchUsers = async () => {
@@ -49,7 +56,7 @@ export default function UserManagementPage() {
       setNewEmail('');
       setNewPassword('');
       setNewName('');
-      setNewRole('Viewer');
+      setNewRole('viewer');
       setNewOrg('');
       fetchUsers();
     } catch (err: any) {
@@ -78,11 +85,41 @@ export default function UserManagementPage() {
     setSuccessMsg('');
     try {
       await AuthService.adminChangeUserRole(uid, role);
-      setSuccessMsg(`User role updated to ${role}.`);
+      setSuccessMsg(`User role updated to ${role.replace('_', ' ')}.`);
       fetchUsers();
     } catch (err: any) {
       console.error(err);
       setErrorMsg('Failed to update user role.');
+    }
+  };
+
+  const handleEditClick = (user: UserProfile) => {
+    setEditingUser(user);
+    setEditName(user.name);
+    setEditRole(user.role);
+    setEditOrg(user.org || '');
+  };
+
+  const handleEditUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    setIsEditing(true);
+    setErrorMsg('');
+    setSuccessMsg('');
+    try {
+      await AuthService.adminUpdateUserProfile(editingUser.uid, {
+        name: editName,
+        org: editOrg,
+        role: editRole
+      });
+      setSuccessMsg(`User profile for "${editName}" updated successfully.`);
+      setEditingUser(null);
+      fetchUsers();
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(err.message || 'Failed to update user profile.');
+    } finally {
+      setIsEditing(false);
     }
   };
 
@@ -149,6 +186,7 @@ export default function UserManagementPage() {
               <thead>
                 <tr className="bg-surface-container-low border-b border-outline-variant text-[10px] text-on-surface-variant uppercase font-bold tracking-wider">
                   <th className="px-5 py-4">User Details</th>
+                  <th className="px-5 py-4">Organisation</th>
                   <th className="px-5 py-4">Security Role</th>
                   <th className="px-5 py-4">Account Status</th>
                   <th className="px-5 py-4">Created Date</th>
@@ -170,16 +208,19 @@ export default function UserManagementPage() {
                         </div>
                       </div>
                     </td>
+                    <td className="px-5 py-4 text-on-surface-variant font-semibold">
+                      {u.org || '—'}
+                    </td>
                     <td className="px-5 py-4">
                       <select
                         value={u.role}
                         onChange={(e) => handleRoleChange(u.uid, e.target.value as any)}
-                        className="border border-outline-variant rounded px-2 py-1 bg-surface-container-low text-xs outline-none focus:ring-1 focus:ring-secondary"
+                        className="border border-outline-variant rounded px-2 py-1 bg-surface-container-low text-xs outline-none focus:ring-1 focus:ring-secondary font-semibold text-on-surface-variant"
                       >
-                        <option value="Super Admin">Super Admin</option>
-                        <option value="Admin">Admin</option>
-                        <option value="Issuer">Issuer</option>
-                        <option value="Viewer">Viewer</option>
+                        <option value="super_admin">Super Admin</option>
+                        <option value="admin">Admin</option>
+                        <option value="issuer">Issuer</option>
+                        <option value="viewer">Viewer</option>
                       </select>
                     </td>
                     <td className="px-5 py-4">
@@ -200,6 +241,13 @@ export default function UserManagementPage() {
                     <td className="px-5 py-4 text-right">
                       <div className="flex justify-end gap-2">
                         <button
+                          onClick={() => handleEditClick(u)}
+                          className="px-2 py-1 rounded border border-outline-variant text-on-surface hover:bg-surface-container-low font-bold flex items-center"
+                          title="Edit User Details"
+                        >
+                          <span className="material-symbols-outlined text-sm font-bold">edit</span>
+                        </button>
+                        <button
                           onClick={() => handleToggleStatus(u.uid, !!u.disabled)}
                           className={`px-3 py-1 rounded border text-[10px] font-bold ${
                             u.disabled 
@@ -207,11 +255,11 @@ export default function UserManagementPage() {
                               : 'border-amber-300 text-amber-600 bg-amber-50 hover:bg-amber-100'
                           }`}
                         >
-                          {u.disabled ? 'Enable Account' : 'Disable Account'}
+                          {u.disabled ? 'Enable' : 'Disable'}
                         </button>
                         <button
                           onClick={() => handleDeleteUser(u.uid, u.name)}
-                          className="px-2 py-1 rounded border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 font-bold"
+                          className="px-2 py-1 rounded border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 font-bold flex items-center"
                           title="Delete User"
                         >
                           <span className="material-symbols-outlined text-sm font-bold">delete</span>
@@ -228,9 +276,14 @@ export default function UserManagementPage() {
 
       {/* Create User Dialog Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl border border-outline-variant p-6 max-w-md w-full shadow-2xl space-y-4">
-            <h3 className="text-sm font-extrabold text-on-surface uppercase border-b pb-1">Create New User Profile</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl border border-outline-variant p-6 max-w-md w-full shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b pb-2">
+              <h3 className="text-sm font-extrabold text-on-surface uppercase">Create New User Profile</h3>
+              <button onClick={() => setShowCreateModal(false)} className="text-on-surface-variant hover:text-on-surface">
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
+            </div>
             <form onSubmit={handleCreateUser} className="space-y-3.5">
               <div>
                 <label className="block font-semibold mb-1 text-on-surface-variant uppercase text-[9px]">Full Name</label>
@@ -281,12 +334,12 @@ export default function UserManagementPage() {
                   <select
                     value={newRole}
                     onChange={(e) => setNewRole(e.target.value as any)}
-                    className="w-full rounded border border-outline-variant px-2 py-1.5 outline-none bg-surface-container-low text-xs"
+                    className="w-full rounded border border-outline-variant px-2 py-1.5 outline-none bg-surface-container-low text-xs font-semibold text-on-surface-variant"
                   >
-                    <option value="Super Admin">Super Admin</option>
-                    <option value="Admin">Admin</option>
-                    <option value="Issuer">Issuer</option>
-                    <option value="Viewer">Viewer</option>
+                    <option value="super_admin">Super Admin</option>
+                    <option value="admin">Admin</option>
+                    <option value="issuer">Issuer</option>
+                    <option value="viewer">Viewer</option>
                   </select>
                 </div>
 
@@ -316,6 +369,87 @@ export default function UserManagementPage() {
                   className="flex-1 bg-secondary text-white font-bold py-2 rounded-lg hover:opacity-90 active:scale-95 shadow-md"
                 >
                   {isCreating ? 'Registering...' : 'Register User'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit User Dialog Modal */}
+      {editingUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl border border-outline-variant p-6 max-w-md w-full shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b pb-2">
+              <h3 className="text-sm font-extrabold text-on-surface uppercase">Edit User Profile</h3>
+              <button onClick={() => setEditingUser(null)} className="text-on-surface-variant hover:text-on-surface">
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
+            </div>
+            <form onSubmit={handleEditUser} className="space-y-3.5">
+              <div>
+                <label className="block font-semibold mb-1 text-on-surface-variant uppercase text-[9px]">Full Name</label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full rounded border border-outline-variant px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-secondary/55 bg-surface-container-low"
+                  placeholder="John Doe"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-on-surface-variant uppercase text-[9px]">Email Address (Read Only)</label>
+                <input
+                  type="email"
+                  disabled
+                  value={editingUser.email}
+                  className="w-full rounded border border-outline-variant px-2.5 py-1.5 outline-none bg-surface-container text-on-surface-variant opacity-60"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold mb-1 text-on-surface-variant uppercase text-[9px]">Security Role</label>
+                  <select
+                    value={editRole}
+                    onChange={(e) => setEditRole(e.target.value as any)}
+                    className="w-full rounded border border-outline-variant px-2 py-1.5 outline-none bg-surface-container-low text-xs font-semibold text-on-surface-variant"
+                  >
+                    <option value="super_admin">Super Admin</option>
+                    <option value="admin">Admin</option>
+                    <option value="issuer">Issuer</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold mb-1 text-on-surface-variant uppercase text-[9px]">Organisation (Optional)</label>
+                  <input
+                    type="text"
+                    value={editOrg}
+                    onChange={(e) => setEditOrg(e.target.value)}
+                    className="w-full rounded border border-outline-variant px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-secondary/55 bg-surface-container-low"
+                    placeholder="CertForge Academy"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-3 border-t">
+                <button
+                  type="button"
+                  onClick={() => setEditingUser(null)}
+                  className="flex-1 border border-outline rounded-lg py-2 font-semibold hover:bg-surface-container"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isEditing}
+                  className="flex-1 bg-secondary text-white font-bold py-2 rounded-lg hover:opacity-90 active:scale-95 shadow-md"
+                >
+                  {isEditing ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
             </form>

@@ -33,7 +33,7 @@ export class AuthService {
         uid: cred.user.uid,
         email: cred.user.email || email,
         name: email.split('@')[0],
-        role: 'Viewer',
+        role: 'viewer',
         createdAt: new Date().toISOString(),
         disabled: false
       };
@@ -62,7 +62,7 @@ export class AuthService {
         uid: cred.user.uid,
         email: cred.user.email || '',
         name: cred.user.displayName || cred.user.email?.split('@')[0] || 'Google User',
-        role: 'Viewer',
+        role: 'viewer',
         createdAt: new Date().toISOString(),
         disabled: false
       };
@@ -144,5 +144,10 @@ export class AuthService {
   // Super Admin Action: Fetch All Users list
   static async adminListUsers(): Promise<UserProfile[]> {
     return await getActiveUserProfiles();
+  }
+
+  // Super Admin Action: Edit User Profile (Name, Org, Role)
+  static async adminUpdateUserProfile(uid: string, updates: Partial<UserProfile>): Promise<void> {
+    await updateUserProfile(uid, updates);
   }
 }

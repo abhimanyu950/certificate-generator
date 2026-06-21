@@ -1,7 +1,7 @@
 import { db } from './firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
-export type UserRole = 'Super Admin' | 'Admin' | 'Issuer' | 'Viewer';
+export type UserRole = 'super_admin' | 'admin' | 'issuer' | 'viewer';
 
 export interface UserProfile {
   uid: string;

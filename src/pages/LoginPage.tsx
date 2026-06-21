@@ -65,19 +65,7 @@ export default function LoginPage() {
     }
   };
 
-  // Demo account role login simulation (for local evaluation/testing)
-  const handleDemoLogin = (role: 'Super Admin' | 'Admin' | 'Issuer' | 'Viewer') => {
-    const demoProfile = {
-      uid: `demo_${role.toLowerCase().replace(' ', '_')}`,
-      email: `${role.toLowerCase().replace(' ', '')}@certforge.pro`,
-      name: `${role} Demo User`,
-      role: role,
-      createdAt: new Date().toISOString(),
-      disabled: false
-    };
-    useAuthStore.setState({ user: demoProfile, isAuthenticated: true, isLoading: false });
-    navigate('/');
-  };
+
 
   return (
     <div className="min-h-screen bg-[#f8f9ff] flex items-center justify-center p-6 text-xs font-sans">
@@ -201,38 +189,7 @@ export default function LoginPage() {
           </form>
         )}
 
-        <div className="relative flex py-2 items-center">
-          <div className="flex-grow border-t border-outline-variant"></div>
-          <span className="flex-shrink mx-4 text-on-surface-variant uppercase font-bold text-[9px] tracking-widest">Evaluate Sandbox presets</span>
-          <div className="flex-grow border-t border-outline-variant"></div>
-        </div>
 
-        <div className="grid grid-cols-2 gap-2 text-center">
-          <button
-            onClick={() => handleDemoLogin('Super Admin')}
-            className="p-2 border rounded-lg hover:bg-secondary/5 hover:border-secondary font-bold text-on-surface text-[10px]"
-          >
-            Super Admin
-          </button>
-          <button
-            onClick={() => handleDemoLogin('Admin')}
-            className="p-2 border rounded-lg hover:bg-secondary/5 hover:border-secondary font-bold text-on-surface text-[10px]"
-          >
-            Admin
-          </button>
-          <button
-            onClick={() => handleDemoLogin('Issuer')}
-            className="p-2 border rounded-lg hover:bg-secondary/5 hover:border-secondary font-bold text-on-surface text-[10px]"
-          >
-            Issuer
-          </button>
-          <button
-            onClick={() => handleDemoLogin('Viewer')}
-            className="p-2 border rounded-lg hover:bg-secondary/5 hover:border-secondary font-bold text-on-surface text-[10px]"
-          >
-            Viewer
-          </button>
-        </div>
       </div>
     </div>
   );

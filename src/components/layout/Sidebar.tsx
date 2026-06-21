@@ -12,15 +12,15 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const currentPath = location.pathname;
 
   const menuItems = [
-    { name: 'Dashboard', path: '/', icon: 'dashboard' },
-    { name: 'Designer', path: '/designer', icon: 'brush', roles: ['Super Admin', 'Admin', 'Issuer'] },
-    { name: 'Recipients', path: '/recipients', icon: 'group', roles: ['Super Admin', 'Admin', 'Issuer'] },
-    { name: 'Generation', path: '/generation', icon: 'verified_user', roles: ['Super Admin', 'Admin', 'Issuer'] },
-    { name: 'Verification', path: '/verify', icon: 'fact_check' },
-    { name: 'Campaigns', path: '/campaigns', icon: 'campaign', roles: ['Super Admin', 'Admin'] },
-    { name: 'Analytics', path: '/analytics', icon: 'analytics' },
-    { name: 'Users', path: '/users', icon: 'manage_accounts', roles: ['Super Admin'] },
-    { name: 'Settings', path: '/settings', icon: 'settings', roles: ['Super Admin', 'Admin'] },
+    { name: 'Dashboard', path: '/', icon: 'dashboard', roles: ['super_admin', 'admin', 'viewer'] },
+    { name: 'Designer', path: '/designer', icon: 'brush', roles: ['super_admin', 'admin', 'issuer'] },
+    { name: 'Recipients', path: '/recipients', icon: 'group', roles: ['super_admin', 'admin'] },
+    { name: 'Generation', path: '/generation', icon: 'verified_user', roles: ['super_admin', 'admin', 'issuer'] },
+    { name: 'Verification', path: '/verify', icon: 'fact_check', roles: ['super_admin', 'issuer', 'viewer'] },
+    { name: 'Campaigns', path: '/campaigns', icon: 'campaign', roles: ['super_admin', 'admin'] },
+    { name: 'Analytics', path: '/analytics', icon: 'analytics', roles: ['super_admin', 'admin', 'viewer'] },
+    { name: 'Users', path: '/users', icon: 'manage_accounts', roles: ['super_admin'] },
+    { name: 'Settings', path: '/settings', icon: 'settings', roles: ['super_admin'] },
   ];
 
   // Filter menu items by user role
@@ -112,7 +112,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         </nav>
 
         {/* Quick Action Footer */}
-        {user && user.role !== 'Viewer' && (
+        {user && user.role !== 'viewer' && (
           <div className="p-3 border-t border-outline-variant/50 shrink-0">
             <Link
               to="/generation"
@@ -141,7 +141,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold text-on-surface truncate">{user.name}</p>
-                <p className="text-[10px] text-on-surface-variant uppercase tracking-wider font-medium">{user.role}</p>
+                <p className="text-[10px] text-on-surface-variant uppercase tracking-wider font-medium">{user.role.replace('_', ' ')}</p>
               </div>
             </div>
           </div>

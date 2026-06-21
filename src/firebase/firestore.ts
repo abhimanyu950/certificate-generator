@@ -5,7 +5,7 @@ export interface UserProfile {
   uid: string;
   email: string;
   name: string;
-  role: 'Super Admin' | 'Admin' | 'Issuer' | 'Viewer';
+  role: 'super_admin' | 'admin' | 'issuer' | 'viewer';
   org?: string;
   createdAt: string;
   lastLogin?: string;

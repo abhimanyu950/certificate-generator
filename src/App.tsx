@@ -13,6 +13,7 @@ import AnalyticsPage from './pages/AnalyticsPage';
 import SettingsPage from './pages/SettingsPage';
 import LoginPage from './pages/LoginPage';
 import UserManagementPage from './pages/UserManagementPage';
+import AccessDeniedPage from './pages/AccessDeniedPage';
 import { useAuthStore } from './store/authStore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './services/firebase';
@@ -39,7 +40,7 @@ function ProtectedRoute({ allowedRoles }: { allowedRoles?: string[] }) {
   }
 
   if (allowedRoles && !allowedRoles.includes(user.role)) {
-    return <Navigate to="/" replace />;
+    return <AccessDeniedPage />;
   }
 
   return <Outlet />;
@@ -84,7 +85,7 @@ export default function App() {
             uid: firebaseUser.uid,
             email: firebaseUser.email || '',
             name: firebaseUser.email?.split('@')[0] || 'User',
-            role: 'Viewer' as const,
+            role: 'viewer' as const,
             createdAt: new Date().toISOString(),
             disabled: false
           };
@@ -112,27 +113,52 @@ export default function App() {
           {/* Secure Pages Layout */}
           <Route element={<ProtectedRoute />}>
             <Route element={<LayoutShell />}>
-              <Route path="/" element={<DashboardPage />} />
-              <Route path="/verify" element={<VerificationPage />} />
-              <Route path="/analytics" element={<AnalyticsPage />} />
+              
+              {/* Dashboard Route (super_admin, admin, viewer) */}
+              <Route element={<ProtectedRoute allowedRoles={['super_admin', 'admin', 'viewer']} />}>
+                <Route path="/" element={<DashboardPage />} />
+              </Route>
 
-              {/* Issuer/Admin Protected Routes */}
-              <Route element={<ProtectedRoute allowedRoles={['Super Admin', 'Admin', 'Issuer']} />}>
+              {/* Verification Route (super_admin, issuer, viewer) */}
+              <Route element={<ProtectedRoute allowedRoles={['super_admin', 'issuer', 'viewer']} />}>
+                <Route path="/verify" element={<VerificationPage />} />
+              </Route>
+
+              {/* Analytics Route (super_admin, admin, viewer) */}
+              <Route element={<ProtectedRoute allowedRoles={['super_admin', 'admin', 'viewer']} />}>
+                <Route path="/analytics" element={<AnalyticsPage />} />
+              </Route>
+
+              {/* Designer Route (super_admin, admin, issuer) */}
+              <Route element={<ProtectedRoute allowedRoles={['super_admin', 'admin', 'issuer']} />}>
                 <Route path="/designer" element={<DesignerPage />} />
+              </Route>
+
+              {/* Recipients Route (super_admin, admin) */}
+              <Route element={<ProtectedRoute allowedRoles={['super_admin', 'admin']} />}>
                 <Route path="/recipients" element={<RecipientsPage />} />
+              </Route>
+
+              {/* Generation Route (super_admin, admin, issuer) */}
+              <Route element={<ProtectedRoute allowedRoles={['super_admin', 'admin', 'issuer']} />}>
                 <Route path="/generation" element={<GenerationPage />} />
               </Route>
 
-              {/* Admin Protected Routes */}
-              <Route element={<ProtectedRoute allowedRoles={['Super Admin', 'Admin']} />}>
+              {/* Campaigns/Certificates Route (super_admin, admin) */}
+              <Route element={<ProtectedRoute allowedRoles={['super_admin', 'admin']} />}>
                 <Route path="/campaigns" element={<CampaignPage />} />
+              </Route>
+
+              {/* Settings Route (super_admin only) */}
+              <Route element={<ProtectedRoute allowedRoles={['super_admin']} />}>
                 <Route path="/settings" element={<SettingsPage />} />
               </Route>
 
-              {/* Super Admin Protected Routes */}
-              <Route element={<ProtectedRoute allowedRoles={['Super Admin']} />}>
+              {/* User Management Route (super_admin only) */}
+              <Route element={<ProtectedRoute allowedRoles={['super_admin']} />}>
                 <Route path="/users" element={<UserManagementPage />} />
               </Route>
+
             </Route>
           </Route>
 
