@@ -1,14 +1,15 @@
 import { useState, useRef } from 'react';
 import { useDesignerStore } from '../store/designerStore';
 import { useRecipientStore } from '../store/recipientStore';
-import { db, storage } from '../services/firebase';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { db, storage, auth } from '../services/firebase';
+import { doc, setDoc, serverTimestamp, collection, addDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { computeCertificateHash } from '../utils/crypto';
 import { EmailService } from '../services/email.service';
 import { AuditService } from '../services/audit.service';
 import { generateCertificatePDF } from '../utils/pdf';
 import JSZip from 'jszip';
+import QRCode from 'qrcode';
 
 export default function GenerationPage() {
   const { elements, certSettings, background, backgroundImage, canvasWidth, canvasHeight } = useDesignerStore();
@@ -60,13 +61,17 @@ export default function GenerationPage() {
       publicKey: localStorage.getItem('cf_emailSettings_key') || ''
     };
 
+    const pipelinePromises: Promise<void>[] = [];
+
     for (let i = 0; i < list.length; i++) {
       const recipient = list[i];
       const stepProgress = Math.round(((i + 0.5) / list.length) * 100);
       setProgress(stepProgress);
       
       const certId = recipient.certId || `${certSettings.prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-      const verifyUrl = `${certSettings.verifyUrl}?id=${certId}`;
+      const verifyUrl = `${window.location.origin}/verify/${certId}`;
+
+      let pdfBlob: Blob | null = null;
 
       try {
         if (hiddenCanvasRef.current) {
@@ -80,106 +85,268 @@ export default function GenerationPage() {
           if (certIdEl) certIdEl.textContent = certId;
           if (orgEl) orgEl.textContent = certSettings.org;
 
-          // 1. Generate PDF
-          const pdfBlob = await generateCertificatePDF(hiddenCanvasRef.current);
-          
-          if (!compiledPDFs.some(p => p.certId === certId)) {
-            compiledPDFs.push({ name: recipient.name, blob: pdfBlob, certId });
+          // Generate and load QR code image
+          const qrContainer = hiddenCanvasRef.current.querySelector('[data-role="qr"]');
+          if (qrContainer) {
+            const imgEl = qrContainer.querySelector('img');
+            if (imgEl) {
+              const qrDataUrl = await QRCode.toDataURL(verifyUrl, {
+                margin: 1,
+                width: 300 // High resolution
+              });
+              await new Promise<void>((resolve, reject) => {
+                imgEl.onload = () => {
+                  imgEl.style.display = 'block';
+                  resolve();
+                };
+                imgEl.onerror = () => reject(new Error('Failed to load QR code image onto canvas'));
+                imgEl.src = qrDataUrl;
+              });
+            }
           }
 
-          // 2. Upload PDF to Firebase Storage
-          addLog(`Uploading PDF for ${recipient.name} to Firebase Storage...`);
-          const fileRef = ref(storage, `certificates/${certId}.pdf`);
-          const uploadSnapshot = await uploadBytes(fileRef, pdfBlob);
-          const downloadUrl = await getDownloadURL(uploadSnapshot.ref);
-          addLog(`✓ Uploaded successfully`);
-
-          // 3. Compute cryptographic hash (SHA-256)
-          const shaHash = await computeCertificateHash({
-            certId,
-            recipientName: recipient.name,
-            courseName: recipient.course || certSettings.course,
-            issueDate: certSettings.date,
-            issuerName: certSettings.org
-          });
-
-          // 4. Save metadata document in Firestore
-          await setDoc(doc(db, 'certificates', certId), {
-            certId,
-            name: recipient.name,
-            email: recipient.email,
-            course: recipient.course || certSettings.course,
-            date: certSettings.date,
-            issuedBy: certSettings.org,
-            title: certSettings.title,
-            hash: shaHash,
-            verifyUrl,
-            downloadUrl,
-            status: 'valid',
-            issuedAt: serverTimestamp()
-          });
-          addLog(`✓ Registered & Signed metadata in Firestore`);
-
-          // Log CERTIFICATE_GENERATED event
-          AuditService.logEvent({
-            action: 'CERTIFICATE_GENERATED',
-            userId: '',
-            entityType: 'certificate',
-            entityId: certId,
-            metadata: {
-              name: recipient.name,
-              email: recipient.email,
-              course: recipient.course || certSettings.course,
-              title: certSettings.title
+          // 1. Generate PDF
+          try {
+            pdfBlob = await generateCertificatePDF(hiddenCanvasRef.current);
+            if (!compiledPDFs.some(p => p.certId === certId)) {
+              compiledPDFs.push({ name: recipient.name, blob: pdfBlob, certId });
             }
-          });
-
-          // 5. Send EmailJS notification
-          addLog(`Sending EmailJS template to ${recipient.email}...`);
-          await EmailService.sendCertificateEmail({
-            recipient_name: recipient.name,
-            recipient_email: recipient.email,
-            certificate_id: certId,
-            course_name: recipient.course || certSettings.course,
-            issue_date: certSettings.date,
-            download_url: downloadUrl,
-            verification_url: verifyUrl
-          }, emailSettings);
-
-          addLog(`✓ Emailed successfully`);
-          
-          // Log EMAIL_SENT and EMAIL_DELIVERED
-          AuditService.logEvent({
-            action: 'EMAIL_SENT',
-            userId: '',
-            entityType: 'certificate',
-            entityId: certId,
-            metadata: { email: recipient.email }
-          });
-          AuditService.logEvent({
-            action: 'EMAIL_DELIVERED',
-            userId: '',
-            entityType: 'certificate',
-            entityId: certId,
-            metadata: { email: recipient.email }
-          });
-
-          updateRecipient(recipient.id, { status: 'sent', certId, error: null });
+          } catch (e: any) {
+            console.error('PDF Generation failed:', e);
+            addLog(`✗ PDF Generation failed: ${e.message}`);
+          }
         }
       } catch (err: any) {
         console.error(err);
         const errorMsg = err.text || err.message || 'Generation or delivery failed';
         updateRecipient(recipient.id, { status: 'failed', error: errorMsg });
         addLog(`✗ ${recipient.name} — Failed: ${errorMsg}`);
-        
-        // Log EMAIL_FAILED
-        AuditService.logEvent({
-          action: 'EMAIL_FAILED',
-          userId: '',
-          entityType: 'certificate',
-          entityId: certId,
-          metadata: { email: recipient.email, error: errorMsg }
-        });
+      }
+
+      if (pdfBlob) {
+        // Run network pipeline concurrently in the background
+        const networkTask = (async (blob: Blob, cId: string, vUrl: string) => {
+          let downloadUrl = '';
+
+          // 1. Upload PDF to Firebase Storage
+          addLog(`Uploading PDF for ${recipient.name} to Firebase Storage...`);
+          const fileRef = ref(storage, `certificates/${cId}.pdf`);
+          console.time(`4. Firebase Storage Upload [${recipient.name}]`);
+          try {
+            const uploadPromise = uploadBytes(fileRef, blob);
+            const timeoutPromise = new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Firebase Storage Upload timed out (15000ms)')), 15000)
+            );
+            const uploadSnapshot = await Promise.race([uploadPromise, timeoutPromise]);
+            downloadUrl = await getDownloadURL(uploadSnapshot.ref);
+            addLog(`✓ [${recipient.name}] Uploaded successfully`);
+          } catch (e: any) {
+            console.error(`Firebase Storage Upload failed/timed out for ${recipient.name}:`, e);
+            const errMsg = e.message || String(e);
+            addLog(`✗ [${recipient.name}] Firebase Storage Upload failed: ${errMsg}`);
+            updateRecipient(recipient.id, { status: 'failed', error: 'Upload Failed' });
+            
+            try {
+              await addDoc(collection(db, 'audit_logs'), {
+                action: 'EMAIL_FAILED',
+                userId: auth.currentUser?.uid || 'anonymous',
+                timestamp: serverTimestamp(),
+                entityType: 'certificate',
+                entityId: cId,
+                metadata: { error: `Upload Failed: ${errMsg}` },
+                eventType: 'UPLOAD_FAILED',
+                certificateId: cId,
+                recipientEmail: recipient.email,
+                status: 'failed',
+                errorMessage: `Upload Failed: ${errMsg}`
+              });
+            } catch (err) {}
+            return; // Abort pipeline, do not continue to EmailJS
+          } finally {
+            console.timeEnd(`4. Firebase Storage Upload [${recipient.name}]`);
+          }
+
+          // 2. Compute cryptographic hash (SHA-256)
+          let shaHash = '';
+          console.time(`3. SHA256 Hashing [${recipient.name}]`);
+          try {
+            shaHash = await computeCertificateHash({
+              certId: cId,
+              recipientName: recipient.name,
+              courseName: recipient.course || certSettings.course,
+              issueDate: certSettings.date,
+              issuerName: certSettings.org
+            });
+          } catch (e: any) {
+            console.error(`SHA256 Hashing failed for ${recipient.name}:`, e);
+            const errMsg = e.message || String(e);
+            addLog(`✗ [${recipient.name}] SHA256 Hashing failed: ${errMsg}`);
+            updateRecipient(recipient.id, { status: 'failed', error: 'Verification Failed' });
+
+            try {
+              await addDoc(collection(db, 'audit_logs'), {
+                action: 'EMAIL_FAILED',
+                userId: auth.currentUser?.uid || 'anonymous',
+                timestamp: serverTimestamp(),
+                entityType: 'certificate',
+                entityId: cId,
+                metadata: { error: `Hash Failed: ${errMsg}` },
+                eventType: 'HASH_FAILED',
+                certificateId: cId,
+                recipientEmail: recipient.email,
+                status: 'failed',
+                errorMessage: `Verification Failed: Hash Failed: ${errMsg}`
+              });
+            } catch (err) {}
+            return;
+          } finally {
+            console.timeEnd(`3. SHA256 Hashing [${recipient.name}]`);
+          }
+
+          // 3. Save metadata document in Firestore
+          console.time(`5. Firestore Write [${recipient.name}]`);
+          try {
+            const writePromise = setDoc(doc(db, 'certificates', cId), {
+              certId: cId,
+              name: recipient.name,
+              email: recipient.email,
+              course: recipient.course || certSettings.course,
+              date: certSettings.date,
+              issuedBy: certSettings.org,
+              title: certSettings.title,
+              hash: shaHash,
+              verifyUrl: vUrl,
+              downloadUrl: downloadUrl,
+              status: 'valid',
+              issuedAt: serverTimestamp()
+            });
+            const timeoutPromise = new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Firestore Write timed out (15000ms)')), 15000)
+            );
+            await Promise.race([writePromise, timeoutPromise]);
+            addLog(`✓ [${recipient.name}] Registered & Signed metadata in Firestore`);
+            
+            // Log CERTIFICATE_GENERATED event
+            try {
+              await AuditService.logEvent({
+                action: 'CERTIFICATE_GENERATED',
+                userId: '',
+                entityType: 'certificate',
+                entityId: cId,
+                metadata: {
+                  name: recipient.name,
+                  email: recipient.email,
+                  course: recipient.course || certSettings.course,
+                  title: certSettings.title
+                }
+              });
+            } catch (e) {}
+          } catch (e: any) {
+            console.error(`Firestore Write failed/timed out for ${recipient.name}:`, e);
+            const errMsg = e.message || String(e);
+            addLog(`✗ [${recipient.name}] Firestore Write failed: ${errMsg}`);
+            updateRecipient(recipient.id, { status: 'failed', error: 'Verification Failed' });
+
+            try {
+              await addDoc(collection(db, 'audit_logs'), {
+                action: 'EMAIL_FAILED',
+                userId: auth.currentUser?.uid || 'anonymous',
+                timestamp: serverTimestamp(),
+                entityType: 'certificate',
+                entityId: cId,
+                metadata: { error: `Firestore Write Failed: ${errMsg}` },
+                eventType: 'REGISTRATION_FAILED',
+                certificateId: cId,
+                recipientEmail: recipient.email,
+                status: 'failed',
+                errorMessage: `Verification Failed: Firestore Write failed: ${errMsg}`
+              });
+            } catch (err) {}
+            return;
+          } finally {
+            console.timeEnd(`5. Firestore Write [${recipient.name}]`);
+          }
+
+          // 4. Send EmailJS notification
+          addLog(`Sending EmailJS template to ${recipient.email}...`);
+          console.time(`6. EmailJS Sending [${recipient.name}]`);
+          try {
+            const emailParams = {
+              recipient_name: recipient.name,
+              recipient_email: recipient.email,
+              certificate_id: cId,
+              verification_url: vUrl,
+              certificate_title: certSettings.title || recipient.course || certSettings.course || 'Certificate',
+              pdf_url: downloadUrl,
+              organization_name: certSettings.org || 'CertForge Pro',
+              // Fallbacks
+              course_name: recipient.course || certSettings.course,
+              issue_date: certSettings.date,
+              download_url: downloadUrl
+            };
+
+            // Before EmailJS send, output payload (Task 3)
+            console.log({
+              recipient_name: emailParams.recipient_name,
+              certificate_title: emailParams.certificate_title,
+              certificate_id: emailParams.certificate_id,
+              organization_name: emailParams.organization_name,
+              verification_url: emailParams.verification_url,
+              pdf_url: emailParams.pdf_url
+            });
+
+            const emailPromise = EmailService.sendCertificateEmail(emailParams, emailSettings);
+            const timeoutPromise = new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('EmailJS Sending timed out (15000ms)')), 15000)
+            );
+            await Promise.race([emailPromise, timeoutPromise]);
+            addLog(`✓ [${recipient.name}] Emailed successfully`);
+
+            // 5. Everything succeeded
+            updateRecipient(recipient.id, { status: 'sent', certId: cId, error: null });
+
+            try {
+              await addDoc(collection(db, 'audit_logs'), {
+                action: 'EMAIL_SENT',
+                userId: auth.currentUser?.uid || 'anonymous',
+                timestamp: serverTimestamp(),
+                entityType: 'certificate',
+                entityId: cId,
+                metadata: { email: recipient.email },
+                eventType: 'GENERATION_SUCCESS',
+                certificateId: cId,
+                recipientEmail: recipient.email,
+                status: 'success',
+                errorMessage: ''
+              });
+            } catch (err) {}
+          } catch (e: any) {
+            console.error(`EmailJS Sending failed/timed out for ${recipient.name}:`, e);
+            const errMsg = e.message || String(e);
+            addLog(`✗ [${recipient.name}] EmailJS Sending failed: ${errMsg}`);
+            updateRecipient(recipient.id, { status: 'failed', error: 'Email Failed' });
+
+            try {
+              await addDoc(collection(db, 'audit_logs'), {
+                action: 'EMAIL_FAILED',
+                userId: auth.currentUser?.uid || 'anonymous',
+                timestamp: serverTimestamp(),
+                entityType: 'certificate',
+                entityId: cId,
+                metadata: { error: errMsg },
+                eventType: 'EMAIL_FAILED',
+                certificateId: cId,
+                recipientEmail: recipient.email,
+                status: 'failed',
+                errorMessage: `Email Failed: ${errMsg}`
+              });
+            } catch (err) {}
+          } finally {
+            console.timeEnd(`6. EmailJS Sending [${recipient.name}]`);
+          }
+        })(pdfBlob, certId, verifyUrl);
+
+        pipelinePromises.push(networkTask);
       }
 
       setProcessedCount(i + 1);
@@ -188,6 +355,11 @@ export default function GenerationPage() {
       if (i < list.length - 1 && emailDelay > 0) {
         await new Promise(r => setTimeout(r, emailDelay));
       }
+    }
+
+    if (pipelinePromises.length > 0) {
+      addLog(`Awaiting all concurrent background dispatches (${pipelinePromises.length}) to complete...`);
+      await Promise.all(pipelinePromises);
     }
 
     setGeneratedPDFs(compiledPDFs);
@@ -608,8 +780,20 @@ export default function GenerationPage() {
                 </span>
               )}
               {el.type === 'qr' && (
-                <div className="bg-slate-200 border flex items-center justify-center" style={{ width: el.styles?.width || '100px', height: el.styles?.height || '100px' }}>
-                  QR CODE PLACEHOLDER
+                <div 
+                  data-role="qr"
+                  className="flex items-center justify-center" 
+                  style={{ width: el.styles?.width || '100px', height: el.styles?.height || '100px', backgroundColor: 'transparent' }}
+                >
+                  <img
+                    alt="Verification QR"
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'contain',
+                      display: 'none'
+                    }}
+                  />
                 </div>
               )}
               {el.type === 'divider' && (

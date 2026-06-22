@@ -33,4 +33,5 @@ dist-ssr
 # Backups
 _backup/
 
-
+# Firebase cache
+.firebase/

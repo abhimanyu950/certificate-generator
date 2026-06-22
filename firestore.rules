@@ -70,6 +70,13 @@ service cloud.firestore {
       allow read: if isSignedIn() && isNotDisabled();
       allow update, delete: if isSuperAdmin();
     }
+
+    // Rules for email_logs collection
+    match /email_logs/{logId} {
+      allow create: if true;
+      allow read: if isSignedIn() && isNotDisabled();
+      allow update, delete: if isSuperAdmin();
+    }
   }
 }
 

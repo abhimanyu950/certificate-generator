@@ -18,11 +18,31 @@ const defaultFirebaseConfig = {
 // Check for custom configuration in localStorage, fallback to default
 const getFirebaseConfig = () => {
   try {
+    // 1. Check for individual keys saved by SettingsPage
+    const projectId = localStorage.getItem('cf_firebaseSettings_projectId');
+    const apiKey = localStorage.getItem('cf_firebaseSettings_apiKey');
+    
+    if (projectId && apiKey && !projectId.includes('prod-ax7') && !apiKey.includes('4X9mZ9')) {
+      return {
+        ...defaultFirebaseConfig,
+        apiKey,
+        projectId,
+        authDomain: `${projectId}.firebaseapp.com`,
+        storageBucket: `${projectId}.firebasestorage.app`
+      };
+    }
+
+    // 2. Check for JSON string fallback
     const customConfig = localStorage.getItem('cf_firebaseSettings');
     if (customConfig) {
       const parsed = JSON.parse(customConfig);
       if (parsed && parsed.apiKey && parsed.projectId) {
-        return parsed;
+        return {
+          ...defaultFirebaseConfig,
+          ...parsed,
+          authDomain: parsed.authDomain || `${parsed.projectId}.firebaseapp.com`,
+          storageBucket: parsed.storageBucket || `${parsed.projectId}.firebasestorage.app`
+        };
       }
     }
   } catch (e) {

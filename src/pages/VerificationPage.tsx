@@ -1,17 +1,18 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { verifyCertificate } from '../services/verification';
 import type { VerificationResult } from '../services/verification';
 import { downloadPDFBlob } from '../utils/pdf';
 import { AuditService } from '../services/audit.service';
 
 export default function VerificationPage() {
+  const { id } = useParams();
   const [searchParams] = useSearchParams();
   const [certIdInput, setCertIdInput] = useState('');
   const [result, setResult] = useState<VerificationResult | null>(null);
   const [isValidating, setIsValidating] = useState(false);
 
-  const queryId = searchParams.get('id');
+  const queryId = id || searchParams.get('id');
 
   const executeVerification = async (id: string) => {
     if (!id.trim()) return;

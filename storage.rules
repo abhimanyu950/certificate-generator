@@ -1,0 +1,28 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper: Check if user is signed in
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Rules for certificates folder (PDFs)
+    match /certificates/{allPaths=**} {
+      allow read: if true; // Public read for public verification page links
+      allow write: if isSignedIn(); // Only signed-in administrators can create/modify
+    }
+
+    // Rules for templates folder
+    match /templates/{allPaths=**} {
+      allow read: if true; // Public read for rendering certificate previews
+      allow write: if isSignedIn(); // Only signed-in users can upload layouts/designs
+    }
+
+    // Rules for logos, signatures, and assets
+    match /assets/{allPaths=**} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+  }
+}

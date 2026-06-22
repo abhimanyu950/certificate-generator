@@ -18,14 +18,22 @@ export default function SettingsPage() {
   const [tfaEnabled, setTfaEnabled] = useState(true);
   const [testEmailAddress, setTestEmailAddress] = useState('');
   const [isTestingEmail, setIsTestingEmail] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info') => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast(prev => prev && prev.message === message ? null : prev);
+    }, 4000);
+  };
 
   const handleTestEmail = async () => {
     if (!testEmailAddress) {
-      alert('Please enter a recipient email address to send the test email.');
+      showToast('Please enter a recipient email address to send the test email.', 'error');
       return;
     }
     if (!emailKey || !emailService || !emailTemplate) {
-      alert('Please fill out all EmailJS configuration fields (Public Key, Service ID, Template ID) first.');
+      showToast('Please fill out all EmailJS configuration fields (Public Key, Service ID, Template ID) first.', 'error');
       return;
     }
     setIsTestingEmail(true);
@@ -34,18 +42,22 @@ export default function SettingsPage() {
         recipient_name: 'Test Recipient',
         recipient_email: testEmailAddress,
         certificate_id: 'TEST_ID_123',
-        course_name: 'Vite & React Stabilization Test',
+        certificate_title: 'SaaS Platform Setup Test',
+        pdf_url: 'https://certforge-web.web.app/favicon.svg',
+        verification_url: 'https://certforge-web.web.app/verify.html?id=TEST_ID_123',
+        organization_name: orgName || 'CertForge Pro',
+        // Fallbacks
+        course_name: 'SaaS Platform Setup Test',
         issue_date: new Date().toLocaleDateString(),
-        download_url: 'https://certforge-web.web.app/favicon.svg',
-        verification_url: 'https://certforge-web.web.app/verify.html?id=TEST_ID_123'
+        download_url: 'https://certforge-web.web.app/favicon.svg'
       }, {
         serviceId: emailService,
         templateId: emailTemplate,
         publicKey: emailKey
       });
-      alert('Test email sent successfully via EmailJS! Check your inbox.');
+      showToast('Test email sent successfully via EmailJS! Check your inbox.', 'success');
     } catch (e: any) {
-      alert(`Test email dispatch failed: ${e.text || e.message || String(e)}`);
+      showToast(`Test email dispatch failed: ${e.text || e.message || String(e)}`, 'error');
     } finally {
       setIsTestingEmail(false);
     }
@@ -68,7 +80,7 @@ export default function SettingsPage() {
     localStorage.setItem('cf_brandColor', brandColor);
     localStorage.setItem('cf_orgName', orgName);
     
-    alert('Global settings saved successfully!');
+    showToast('Global settings saved successfully!', 'success');
   };
 
   return (
@@ -304,7 +316,7 @@ export default function SettingsPage() {
                         <h4 className="font-bold text-on-surface">Active Session Tokens</h4>
                         <p className="text-[10px] text-on-surface-variant">Tokens initialized across device profiles.</p>
                       </div>
-                      <button onClick={() => alert('All other sessions revoked!')} className="text-red-600 hover:underline font-bold">
+                      <button onClick={() => showToast('All other sessions revoked!', 'info')} className="text-red-600 hover:underline font-bold">
                         Revoke All
                       </button>
                     </div>
@@ -346,7 +358,7 @@ export default function SettingsPage() {
                     <p className="text-on-surface-variant mt-0.5">Manage permissions and team access groups.</p>
                   </div>
                   <button
-                    onClick={() => alert('New team invitation modal opened')}
+                    onClick={() => showToast('New team invitation modal opened', 'info')}
                     className="flex items-center gap-1 bg-secondary text-white font-bold px-3 py-1.5 rounded-lg text-[10px]"
                   >
                     <span className="material-symbols-outlined text-xs">person_add</span>
@@ -414,6 +426,25 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+
+      {/* Toast Notification */}
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border transition-all duration-300 transform translate-y-0 animate-in fade-in slide-in-from-bottom-5 ${
+          toast.type === 'success' 
+            ? 'bg-green-50 border-green-200 text-green-800' 
+            : toast.type === 'error'
+            ? 'bg-red-50 border-red-200 text-red-800'
+            : 'bg-blue-50 border-blue-200 text-blue-800'
+        }`}>
+          <span className="material-symbols-outlined text-lg">
+            {toast.type === 'success' ? 'check_circle' : toast.type === 'error' ? 'error' : 'info'}
+          </span>
+          <span className="font-semibold text-xs">{toast.message}</span>
+          <button onClick={() => setToast(null)} className="ml-2 hover:opacity-75 flex items-center">
+            <span className="material-symbols-outlined text-sm">close</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

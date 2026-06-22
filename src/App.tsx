@@ -110,6 +110,9 @@ export default function App() {
           {/* Public Authentication Path */}
           <Route path="/login" element={<LoginPage />} />
 
+          {/* Public Verification Route (QR scans) */}
+          <Route path="/verify/:id" element={<VerificationPage />} />
+
           {/* Secure Pages Layout */}
           <Route element={<ProtectedRoute />}>
             <Route element={<LayoutShell />}>

@@ -1,6 +1,7 @@
 import emailjs from '@emailjs/browser';
 import { db } from './firebase';
 import { collection, addDoc } from 'firebase/firestore';
+import { AuditService } from './audit.service';
 
 export interface EmailJSConfig {
   serviceId: string;
@@ -12,10 +13,16 @@ export interface CertificateEmailParams {
   recipient_name: string;
   recipient_email: string;
   certificate_id: string;
-  course_name: string;
-  issue_date: string;
-  download_url: string;
   verification_url: string;
+  
+  certificate_title?: string;
+  pdf_url?: string;
+  organization_name?: string;
+  
+  // Backwards compatibility fallbacks
+  course_name?: string;
+  issue_date?: string;
+  download_url?: string;
 }
 
 // Fetch configurations: Env variables first, then localStorage
@@ -51,50 +58,105 @@ export class EmailService {
       throw new Error('EmailJS credentials are not configured. Check environment variables or Settings.');
     }
 
-    try {
-      // Initialize EmailJS
-      emailjs.init(config.publicKey);
+    // Initialize EmailJS
+    emailjs.init(config.publicKey);
 
-      // EmailJS params mapping
-      const templateParams = {
-        recipient_name: params.recipient_name,
-        recipient_email: params.recipient_email,
-        certificate_id: params.certificate_id,
-        course_name: params.course_name,
-        issue_date: params.issue_date,
-        download_url: params.download_url,
-        verification_url: params.verification_url,
-        // Fallbacks for generic templates
-        to_name: params.recipient_name,
-        to_email: params.recipient_email
-      };
+    // EmailJS params mapping
+    const templateParams = {
+      recipient_name: params.recipient_name,
+      recipient_email: params.recipient_email,
+      certificate_title: params.certificate_title || params.course_name || '',
+      certificate_id: params.certificate_id,
+      verification_url: params.verification_url,
+      pdf_url: params.pdf_url || params.download_url || '',
+      organization_name: params.organization_name || 'CertForge Pro',
+      // Fallbacks
+      course_name: params.course_name || params.certificate_title || '',
+      issue_date: params.issue_date || new Date().toLocaleDateString(),
+      download_url: params.download_url || params.pdf_url || '',
+      to_name: params.recipient_name,
+      to_email: params.recipient_email
+    };
 
-      await emailjs.send(config.serviceId, config.templateId, templateParams);
+    let attempts = 0;
+    const maxAttempts = 3;
+    let lastError: any = null;
 
-      // Log success in Firestore
-      await this.logEmailResult({
-        recipientEmail: params.recipient_email,
-        certificateId: params.certificate_id,
-        status: 'success',
-        timestamp: new Date().toISOString(),
-        error: ''
-      });
+    while (attempts < maxAttempts) {
+      try {
+        attempts++;
+        await emailjs.send(config.serviceId, config.templateId, templateParams);
 
-    } catch (error: any) {
-      const errorMsg = error.text || error.message || String(error);
-      console.error('EmailJS single dispatch failed:', errorMsg);
+        const sentAt = new Date().toISOString();
 
-      // Log failure in Firestore
-      await this.logEmailResult({
-        recipientEmail: params.recipient_email,
-        certificateId: params.certificate_id,
-        status: 'failed',
-        timestamp: new Date().toISOString(),
-        error: errorMsg
-      });
+        // 1. Log to email_logs
+        await this.logEmailResult({
+          certificateId: params.certificate_id,
+          recipientEmail: params.recipient_email,
+          templateId: config.templateId,
+          status: 'success',
+          sentAt,
+          errorMessage: ''
+        });
 
-      throw error;
+        // 2. Log to audit_logs
+        await AuditService.logEvent({
+          action: 'EMAIL_SENT',
+          userId: '',
+          entityType: 'certificate',
+          entityId: params.certificate_id,
+          metadata: {
+            certificateId: params.certificate_id,
+            recipientEmail: params.recipient_email,
+            templateId: config.templateId,
+            status: 'success',
+            sentAt,
+            errorMessage: ''
+          }
+        });
+        return; // Success, exit method
+      } catch (error: any) {
+        lastError = error;
+        console.warn(`EmailJS certificate send attempt ${attempts} failed:`, error);
+        if (attempts < maxAttempts) {
+          // Wait 500ms before retrying
+          await new Promise(r => setTimeout(r, 500));
+        }
+      }
     }
+
+    // If we reach here, all attempts failed
+    const errorMsg = lastError.text || lastError.message || String(lastError);
+    const sentAt = new Date().toISOString();
+    console.error('EmailJS single dispatch failed after all retries:', errorMsg);
+
+    // 1. Log to email_logs
+    await this.logEmailResult({
+      certificateId: params.certificate_id,
+      recipientEmail: params.recipient_email,
+      templateId: config.templateId,
+      status: 'failed',
+      sentAt,
+      errorMessage: errorMsg
+    });
+
+    // 2. Log to audit_logs
+    await AuditService.logEvent({
+      action: 'EMAIL_FAILED',
+      userId: '',
+      entityType: 'certificate',
+      entityId: params.certificate_id,
+      metadata: {
+        certificateId: params.certificate_id,
+        recipientEmail: params.recipient_email,
+        templateId: config.templateId,
+        status: 'failed',
+        sentAt,
+        errorMessage: errorMsg
+      }
+    });
+
+    throw lastError;
   }
 
   // Send campaign email and log to Firestore
@@ -110,41 +172,59 @@ export class EmailService {
       throw new Error('EmailJS configuration is incomplete for Campaign.');
     }
 
-    try {
-      emailjs.init(config.publicKey);
+    emailjs.init(config.publicKey);
 
-      const params = {
-        recipient_name: recipient.name,
-        recipient_email: recipient.email,
-        campaign_name: campaignName,
-        to_name: recipient.name,
-        to_email: recipient.email,
-        ...templateParams
-      };
+    const params = {
+      recipient_name: recipient.name,
+      recipient_email: recipient.email,
+      campaign_name: campaignName,
+      to_name: recipient.name,
+      to_email: recipient.email,
+      ...templateParams
+    };
 
-      await emailjs.send(config.serviceId, config.templateId, params);
+    let attempts = 0;
+    const maxAttempts = 3;
+    let lastError: any = null;
 
-      await this.logEmailResult({
-        recipientEmail: recipient.email,
-        certificateId: `campaign_${campaignName}`,
-        status: 'success',
-        timestamp: new Date().toISOString(),
-        error: ''
-      });
-    } catch (error: any) {
-      const errorMsg = error.text || error.message || String(error);
-      console.error('Campaign dispatch failed:', errorMsg);
+    while (attempts < maxAttempts) {
+      try {
+        attempts++;
+        await emailjs.send(config.serviceId, config.templateId, params);
 
-      await this.logEmailResult({
-        recipientEmail: recipient.email,
-        certificateId: `campaign_${campaignName}`,
-        status: 'failed',
-        timestamp: new Date().toISOString(),
-        error: errorMsg
-      });
-
-      throw error;
+        await this.logEmailResult({
+          certificateId: `campaign_${campaignName}`,
+          recipientEmail: recipient.email,
+          templateId: config.templateId,
+          status: 'success',
+          sentAt: new Date().toISOString(),
+          errorMessage: ''
+        });
+        return; // Success, exit method
+      } catch (error: any) {
+        lastError = error;
+        console.warn(`EmailJS campaign send attempt ${attempts} failed:`, error);
+        if (attempts < maxAttempts) {
+          await new Promise(r => setTimeout(r, 500));
+        }
+      }
     }
+
+    // If we reach here, all attempts failed
+    const errorMsg = lastError.text || lastError.message || String(lastError);
+    const sentAt = new Date().toISOString();
+    console.error('Campaign dispatch failed after all retries:', errorMsg);
+
+    await this.logEmailResult({
+      certificateId: `campaign_${campaignName}`,
+      recipientEmail: recipient.email,
+      templateId: config.templateId,
+      status: 'failed',
+      sentAt,
+      errorMessage: errorMsg
+    });
+
+    throw lastError;
   }
 
   // Send bulk emails sequentially, triggering callback on updates
@@ -193,11 +273,12 @@ export class EmailService {
 
   // Firestore logger helper
   private static async logEmailResult(log: {
-    recipientEmail: string;
     certificateId: string;
+    recipientEmail: string;
+    templateId: string;
     status: 'success' | 'failed';
-    timestamp: string;
-    error: string;
+    sentAt: string;
+    errorMessage: string;
   }): Promise<void> {
     try {
       const logsCol = collection(db, 'email_logs');

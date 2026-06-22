@@ -65,16 +65,19 @@ export const generateCertificatePDF = async (canvasElement: HTMLElement): Promis
   // Strip oklch colors before capture
   const restoreColors = stripOklchColors(canvasElement);
 
+  console.time('1. Certificate Rendering');
   const canvas = await html2canvas(canvasElement, {
     scale: 2,
     useCORS: true,
     backgroundColor: null
   });
+  console.timeEnd('1. Certificate Rendering');
 
   // Restore original styles
   restoreColors();
   canvasElement.style.transform = originalTransform;
 
+  console.time('2. PDF Generation');
   const imgDataUrl = canvas.toDataURL('image/png');
 
   // Convert DataURL image to ArrayBuffer
@@ -98,6 +101,7 @@ export const generateCertificatePDF = async (canvasElement: HTMLElement): Promis
   });
 
   const pdfBytes = await pdfDoc.save();
+  console.timeEnd('2. PDF Generation');
   return new Blob([pdfBytes as any], { type: 'application/pdf' });
 };
 
