@@ -90,6 +90,12 @@ export default function VerificationPage() {
     }
   };
 
+  useEffect(() => {
+    if (result && result.isValid && searchParams.get('download') === 'true') {
+      handleDownloadPDF();
+    }
+  }, [result, searchParams]);
+
   return (
     <div className="p-6 max-w-2xl mx-auto space-y-6">
       {/* Verification Query Card */}

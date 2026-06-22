@@ -127,8 +127,9 @@ export default function GenerationPage() {
         // Run network pipeline concurrently in the background
         const networkTask = (async (blob: Blob, cId: string, vUrl: string) => {
           let downloadUrl = '';
+          let pdfBase64 = '';
 
-          // 1. Upload PDF to Firebase Storage
+          // 1. Upload PDF to Firebase Storage (or fallback to Firestore base64 if not set up)
           addLog(`Uploading PDF for ${recipient.name} to Firebase Storage...`);
           const fileRef = ref(storage, `certificates/${cId}.pdf`);
           console.time(`4. Firebase Storage Upload [${recipient.name}]`);
@@ -139,29 +140,43 @@ export default function GenerationPage() {
             );
             const uploadSnapshot = await Promise.race([uploadPromise, timeoutPromise]);
             downloadUrl = await getDownloadURL(uploadSnapshot.ref);
-            addLog(`✓ [${recipient.name}] Uploaded successfully`);
+            addLog(`✓ [${recipient.name}] Uploaded successfully to Firebase Storage`);
           } catch (e: any) {
-            console.error(`Firebase Storage Upload failed/timed out for ${recipient.name}:`, e);
-            const errMsg = e.message || String(e);
-            addLog(`✗ [${recipient.name}] Firebase Storage Upload failed: ${errMsg}`);
-            updateRecipient(recipient.id, { status: 'failed', error: 'Upload Failed' });
+            console.warn(`Firebase Storage upload failed/timed out, falling back to database base64 storage:`, e);
+            addLog(`⚠ [${recipient.name}] Firebase Storage upload failed: ${e.message || String(e)}. Falling back to database storage...`);
             
             try {
-              await addDoc(collection(db, 'audit_logs'), {
-                action: 'EMAIL_FAILED',
-                userId: auth.currentUser?.uid || 'anonymous',
-                timestamp: serverTimestamp(),
-                entityType: 'certificate',
-                entityId: cId,
-                metadata: { error: `Upload Failed: ${errMsg}` },
-                eventType: 'UPLOAD_FAILED',
-                certificateId: cId,
-                recipientEmail: recipient.email,
-                status: 'failed',
-                errorMessage: `Upload Failed: ${errMsg}`
+              // Convert blob to base64 string
+              pdfBase64 = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result as string);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
               });
-            } catch (err) {}
-            return; // Abort pipeline, do not continue to EmailJS
+              downloadUrl = `${vUrl}?download=true`;
+            } catch (err: any) {
+              console.error('Fallback base64 conversion failed:', err);
+              const errMsg = err.message || String(err);
+              addLog(`✗ [${recipient.name}] Fallback base64 conversion failed: ${errMsg}`);
+              updateRecipient(recipient.id, { status: 'failed', error: 'Upload Failed' });
+              
+              try {
+                await addDoc(collection(db, 'audit_logs'), {
+                  action: 'EMAIL_FAILED',
+                  userId: auth.currentUser?.uid || 'anonymous',
+                  timestamp: serverTimestamp(),
+                  entityType: 'certificate',
+                  entityId: cId,
+                  metadata: { error: `Upload & base64 Fallback Failed: ${errMsg}` },
+                  eventType: 'UPLOAD_FAILED',
+                  certificateId: cId,
+                  recipientEmail: recipient.email,
+                  status: 'failed',
+                  errorMessage: `Upload & base64 Fallback Failed: ${errMsg}`
+                });
+              } catch (logErr) {}
+              return; // Abort pipeline
+            }
           } finally {
             console.timeEnd(`4. Firebase Storage Upload [${recipient.name}]`);
           }
@@ -217,6 +232,7 @@ export default function GenerationPage() {
               hash: shaHash,
               verifyUrl: vUrl,
               downloadUrl: downloadUrl,
+              pdf_base64: pdfBase64,
               status: 'valid',
               issuedAt: serverTimestamp()
             });
