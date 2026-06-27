@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { EmailService } from '../services/email.service';
+import { getCertificatesLog, revokeCertificate, restoreCertificate } from '../services/certificates';
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<'firebase' | 'branding' | 'security' | 'team'>('firebase');
+  const [activeTab, setActiveTab] = useState<'firebase' | 'branding' | 'security' | 'team' | 'certificates'>('firebase');
   
   // Settings Form States (loaded/cached in local storage)
   const [firebaseProject, setFirebaseProject] = useState(() => localStorage.getItem('cf_firebaseSettings_projectId') || (import.meta.env.VITE_FIREBASE_PROJECT_ID as string) || 'certforge-prod-ax7');
@@ -19,6 +20,63 @@ export default function SettingsPage() {
   const [testEmailAddress, setTestEmailAddress] = useState('');
   const [isTestingEmail, setIsTestingEmail] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  const [certs, setCerts] = useState<any[]>([]);
+  const [certSearch, setCertSearch] = useState('');
+  const [isLoadingCerts, setIsLoadingCerts] = useState(false);
+  const [showRevokeModal, setShowRevokeModal] = useState(false);
+  const [revokingCertId, setRevokingCertId] = useState('');
+  const [revocationReason, setRevocationReason] = useState('');
+
+  const loadCertificates = async () => {
+    setIsLoadingCerts(true);
+    try {
+      const list = await getCertificatesLog(100);
+      setCerts(list);
+    } catch (e) {
+      console.error(e);
+      showToast('Failed to load certificates registry.', 'error');
+    } finally {
+      setIsLoadingCerts(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'certificates') {
+      loadCertificates();
+    }
+  }, [activeTab]);
+
+  const handleRevokeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!revocationReason.trim()) {
+      alert('Revocation reason is required.');
+      return;
+    }
+    try {
+      await revokeCertificate(revokingCertId, revocationReason);
+      showToast(`Certificate "${revokingCertId}" has been revoked.`, 'success');
+      setShowRevokeModal(false);
+      setRevocationReason('');
+      setRevokingCertId('');
+      loadCertificates();
+    } catch (err) {
+      showToast('Failed to revoke certificate.', 'error');
+    }
+  };
+
+  const handleRestoreClick = async (certId: string) => {
+    if (!confirm(`Are you sure you want to restore certificate "${certId}"? This will return its status to VALID.`)) {
+      return;
+    }
+    try {
+      await restoreCertificate(certId);
+      showToast(`Certificate "${certId}" restored successfully.`, 'success');
+      loadCertificates();
+    } catch (err) {
+      showToast('Failed to restore certificate.', 'error');
+    }
+  };
 
   const showToast = (message: string, type: 'success' | 'error' | 'info') => {
     setToast({ message, type });
@@ -144,6 +202,21 @@ export default function SettingsPage() {
             <span className="flex items-center gap-3">
               <span className="material-symbols-outlined">group</span>
               Team Management
+            </span>
+            <span className="material-symbols-outlined text-secondary">chevron_right</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('certificates')}
+            className={`flex items-center justify-between px-4 py-3 rounded-lg border font-bold transition-all ${
+              activeTab === 'certificates'
+                ? 'border-outline-variant bg-white text-secondary shadow-sm'
+                : 'border-transparent text-on-surface-variant hover:bg-surface-container-high'
+            }`}
+          >
+            <span className="flex items-center gap-3">
+              <span className="material-symbols-outlined">gpp_maybe</span>
+              Revocation Registry
             </span>
             <span className="material-symbols-outlined text-secondary">chevron_right</span>
           </button>
@@ -404,6 +477,106 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
+
+            {activeTab === 'certificates' && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center border-b pb-2">
+                  <div>
+                    <h3 className="text-sm font-bold text-on-surface">Certificate Registry & Revocation</h3>
+                    <p className="text-on-surface-variant mt-0.5">Revoke issued credentials or restore them back to active/valid state.</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Search certs by ID or Name..."
+                      value={certSearch}
+                      onChange={e => setCertSearch(e.target.value)}
+                      className="border border-outline-variant rounded-lg px-3 py-1 text-[11px] focus:ring-1 focus:ring-secondary/55 outline-none bg-surface-container-low"
+                    />
+                    <button
+                      onClick={loadCertificates}
+                      disabled={isLoadingCerts}
+                      className="p-1 bg-surface-container hover:bg-surface-container-high rounded"
+                      title="Refresh Registry"
+                    >
+                      <span className={`material-symbols-outlined text-xs ${isLoadingCerts ? 'animate-spin' : ''}`}>sync</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="border border-outline-variant rounded-xl overflow-hidden shadow-sm max-h-[350px] overflow-y-auto">
+                  <table className="w-full text-left">
+                    <thead className="bg-surface-container-low border-b border-outline-variant text-[10px] text-on-surface-variant font-label-code uppercase sticky top-0">
+                      <tr>
+                        <th className="p-3">Recipient</th>
+                        <th className="p-3">Course / ID</th>
+                        <th className="p-3">Status</th>
+                        <th className="p-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-outline-variant/30">
+                      {isLoadingCerts ? (
+                        <tr>
+                          <td colSpan={4} className="text-center py-8 text-on-surface-variant">Syncing certificates registry...</td>
+                        </tr>
+                      ) : certs.filter(c => 
+                        c.id.toLowerCase().includes(certSearch.toLowerCase()) || 
+                        c.name?.toLowerCase().includes(certSearch.toLowerCase())
+                      ).length > 0 ? (
+                        certs.filter(c => 
+                          c.id.toLowerCase().includes(certSearch.toLowerCase()) || 
+                          c.name?.toLowerCase().includes(certSearch.toLowerCase())
+                        ).map((c, i) => (
+                          <tr key={i} className="hover:bg-surface-container-low/20">
+                            <td className="p-3">
+                              <p className="font-bold text-on-surface">{c.name}</p>
+                              <p className="text-on-surface-variant text-[9px]">{c.email}</p>
+                            </td>
+                            <td className="p-3">
+                              <p className="font-medium text-on-surface">{c.course || c.title}</p>
+                              <p className="font-mono text-[9px] text-secondary">{c.id}</p>
+                            </td>
+                            <td className="p-3">
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
+                                c.status === 'revoked'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-green-100 text-green-800'
+                              }`}>
+                                {c.status || 'valid'}
+                              </span>
+                            </td>
+                            <td className="p-3 text-right">
+                              {c.status === 'revoked' ? (
+                                <button
+                                  onClick={() => handleRestoreClick(c.id)}
+                                  className="px-2.5 py-1 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 rounded font-bold text-[9px]"
+                                >
+                                  Restore
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => {
+                                    setRevokingCertId(c.id);
+                                    setShowRevokeModal(true);
+                                  }}
+                                  className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded font-bold text-[9px]"
+                                >
+                                  Revoke
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={4} className="text-center py-8 text-on-surface-variant">No matching certificates found.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="mt-8 flex justify-end gap-3 border-t pt-4">
@@ -443,6 +616,50 @@ export default function SettingsPage() {
           <button onClick={() => setToast(null)} className="ml-2 hover:opacity-75 flex items-center">
             <span className="material-symbols-outlined text-sm">close</span>
           </button>
+        </div>
+      )}
+      {/* Revocation Modal */}
+      {showRevokeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowRevokeModal(false)}></div>
+          <div className="relative bg-white w-full max-w-sm rounded-2xl shadow-2xl border border-outline-variant overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-4 border-b border-outline-variant flex justify-between items-center bg-surface-container-low">
+              <h3 className="font-bold text-xs text-on-surface">Revoke Certificate</h3>
+              <button className="p-1 hover:bg-surface-container-high rounded-full flex items-center" onClick={() => setShowRevokeModal(false)}>
+                <span className="material-symbols-outlined text-xs">close</span>
+              </button>
+            </div>
+            <form onSubmit={handleRevokeSubmit} className="p-4 space-y-4 text-xs">
+              <p className="text-on-surface-variant text-[11px]">
+                Please enter a reason for revoking certificate <span className="font-mono font-bold text-secondary">{revokingCertId}</span>. This status will display publicly on verification.
+              </p>
+              <div>
+                <label className="block font-semibold mb-1 text-on-surface-variant uppercase text-[9px]">Revocation Reason</label>
+                <textarea
+                  value={revocationReason}
+                  onChange={e => setRevocationReason(e.target.value)}
+                  className="w-full rounded-lg border border-outline-variant px-3 py-2 outline-none focus:ring-1 focus:ring-secondary/50 bg-surface-container-low text-xs h-20 resize-none"
+                  placeholder="e.g. Recipient failed to complete required practical assessments."
+                  required
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2 border-t">
+                <button
+                  type="button"
+                  onClick={() => setShowRevokeModal(false)}
+                  className="px-3 py-1.5 border border-outline-variant font-semibold hover:bg-surface-container rounded-lg text-[10px]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 bg-amber-600 text-white font-bold hover:opacity-95 rounded-lg shadow text-[10px]"
+                >
+                  Revoke Certificate
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

@@ -4,6 +4,7 @@ import { verifyCertificate } from '../services/verification';
 import type { VerificationResult } from '../services/verification';
 import { downloadPDFBlob } from '../utils/pdf';
 import { AuditService } from '../services/audit.service';
+import { ErrorService } from '../services/error.service';
 
 export default function VerificationPage() {
   const { id } = useParams();
@@ -22,12 +23,35 @@ export default function VerificationPage() {
     // Simulate minor delay for authentic validation feel
     await new Promise(r => setTimeout(r, 600));
 
+    // Rate-limit check (Excessive Verification Requests)
+    const now = Date.now();
+    const verificationAttemptsKey = 'cf_verification_attempts';
+    const attemptsStr = localStorage.getItem(verificationAttemptsKey) || '[]';
+    let attempts: number[] = JSON.parse(attemptsStr);
+    attempts = attempts.filter(t => now - t < 60000); // 1 minute window
+    attempts.push(now);
+    localStorage.setItem(verificationAttemptsKey, JSON.stringify(attempts));
+
+    if (attempts.length >= 10) {
+      console.warn('Excessive verification requests detected');
+    }
+
     const check = await verifyCertificate(id.trim());
     setResult(check);
     setIsValidating(false);
 
+    // If verification failed or is compromised, log system error
+    if (!check.isValid) {
+      await ErrorService.logError({
+        errorType: 'VERIFICATION_FAILED',
+        severity: check.status === 'compromised' ? 'high' : 'medium',
+        message: check.reason || 'Certificate verification failed',
+        userId: 'public'
+      });
+    }
+
     // Log CERTIFICATE_VERIFIED event
-    AuditService.logEvent({
+    await AuditService.logEvent({
       action: 'CERTIFICATE_VERIFIED',
       userId: '',
       entityType: 'certificate',
@@ -60,12 +84,12 @@ export default function VerificationPage() {
 
     // Log CERTIFICATE_DOWNLOADED event
     AuditService.logEvent({
-      action: 'CERTIFICATE_DOWNLOADED',
+      action: 'CERTIFICATE_VERIFIED', // Changed from DOWNLOADED as we don't store PDF
       userId: '',
       entityType: 'certificate',
-      entityId: certData.certId,
+      entityId: certData.certificateId || 'unknown',
       metadata: {
-        name: certData.name,
+        name: certData.recipientName,
         course: certData.course
       }
     });
@@ -84,7 +108,7 @@ export default function VerificationPage() {
       }
       
       const blob = new Blob([bytes], { type: 'application/pdf' });
-      downloadPDFBlob(blob, `Certificate_${certData.name}`);
+      downloadPDFBlob(blob, `Certificate_${certData.recipientName}`);
     } else if (certData.downloadUrl) {
       window.open(certData.downloadUrl, '_blank');
     }
@@ -136,18 +160,18 @@ export default function VerificationPage() {
       {/* Results View */}
       {result && !isValidating && (
         <div className="bg-white border border-outline-variant rounded-2xl shadow-xl p-8 text-center animate-in zoom-in-95 duration-200 text-xs">
-          {result.isValid ? (
+          {result.status === 'valid' && (
             <>
               <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-inner">
                 <span className="material-symbols-outlined text-4xl select-none" style={{ fontVariationSettings: "'FILL' 1" }}>verified</span>
               </div>
-              <h2 className="text-lg font-bold text-on-surface">Certificate Verified</h2>
+              <h2 className="text-lg font-black text-green-600 uppercase">VALID CERTIFICATE</h2>
               <p className="text-on-surface-variant mt-1 mb-6">This credential matches SHA-256 security protocols.</p>
 
               <div className="bg-surface-container-low border border-outline-variant p-4 rounded-xl text-left space-y-3 mb-6">
                 <div className="flex justify-between border-b pb-1.5 border-outline-variant/30">
                   <span className="text-on-surface-variant font-semibold">Recipient:</span>
-                  <span className="font-bold text-on-surface text-right">{result.certificateData.name}</span>
+                  <span className="font-bold text-on-surface text-right">{result.certificateData.recipientName}</span>
                 </div>
                 <div className="flex justify-between border-b pb-1.5 border-outline-variant/30">
                   <span className="text-on-surface-variant font-semibold">Course:</span>
@@ -155,15 +179,15 @@ export default function VerificationPage() {
                 </div>
                 <div className="flex justify-between border-b pb-1.5 border-outline-variant/30">
                   <span className="text-on-surface-variant font-semibold">Issued By:</span>
-                  <span className="font-bold text-on-surface text-right">{result.certificateData.issuedBy}</span>
+                  <span className="font-bold text-on-surface text-right">{result.certificateData.organizationName}</span>
                 </div>
                 <div className="flex justify-between border-b pb-1.5 border-outline-variant/30">
                   <span className="text-on-surface-variant font-semibold">Issue Date:</span>
-                  <span className="font-bold text-on-surface text-right">{result.certificateData.date}</span>
+                  <span className="font-bold text-on-surface text-right">{result.certificateData.issueDate}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-on-surface-variant font-semibold">Certificate ID:</span>
-                  <span className="font-mono text-secondary font-bold text-right">{result.certificateData.certId}</span>
+                  <span className="font-mono text-secondary font-bold text-right">{result.certificateData.certificateId}</span>
                 </div>
               </div>
 
@@ -186,17 +210,47 @@ export default function VerificationPage() {
                 </button>
               </div>
             </>
-          ) : (
+          )}
+
+          {result.status === 'revoked' && (
+            <>
+              <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <span className="material-symbols-outlined text-4xl select-none" style={{ fontVariationSettings: "'FILL' 1" }}>gpp_maybe</span>
+              </div>
+              <h2 className="text-lg font-black text-amber-600 uppercase">INVALID CERTIFICATE</h2>
+              <p className="text-on-surface-variant mt-1 mb-4">This certificate has been revoked by the administrator.</p>
+
+              <div className="p-4 bg-amber-50 text-amber-800 rounded-xl text-left border border-amber-200 mb-6 space-y-2">
+                <p className="font-bold">REVOCATION DETAILS:</p>
+                <p><span className="font-semibold">Reason:</span> {result.certificateData?.revocationReason || 'No reason specified by administrator.'}</p>
+                {result.certificateData?.revokedAt && (
+                  <p><span className="font-semibold">Date Revoked:</span> {new Date(result.certificateData.revokedAt).toLocaleString()}</p>
+                )}
+              </div>
+            </>
+          )}
+
+          {result.status === 'compromised' && (
+            <>
+              <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <span className="material-symbols-outlined text-4xl select-none" style={{ fontVariationSettings: "'FILL' 1" }}>gpp_bad</span>
+              </div>
+              <h2 className="text-lg font-black text-red-600 uppercase">INVALID CERTIFICATE</h2>
+              <p className="text-on-surface-variant mt-1 mb-4">Cryptographic integrity validation failed.</p>
+
+              <div className="p-4 bg-red-50 text-red-700 rounded-xl font-mono text-[10px] text-left border border-red-200 mb-6">
+                WARNING: COMPROMISED DATA! Dynamic SHA-256 hash validation does not match the original digital signature registered at issuance. The certificate text or values may have been tampered with.
+              </div>
+            </>
+          )}
+
+          {result.status === 'not_found' && (
             <>
               <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
                 <span className="material-symbols-outlined text-4xl select-none" style={{ fontVariationSettings: "'FILL' 1" }}>error</span>
               </div>
-              <h2 className="text-lg font-bold text-on-surface">Verification Failed</h2>
-              <p className="text-on-surface-variant mt-1 mb-4">{result.reason || 'This certificate has been revoked or tampered.'}</p>
-              
-              <div className="p-4 bg-red-50 text-red-700 rounded-xl font-mono text-[10px] text-left border border-red-200 mb-6">
-                ALERT: Cryptographic SHA-256 match comparison rejected. Hash discrepancy or revoking key detected.
-              </div>
+              <h2 className="text-lg font-black text-red-600 uppercase">INVALID CERTIFICATE</h2>
+              <p className="text-on-surface-variant mt-1 mb-6">The certificate ID you entered is not registered in our database.</p>
             </>
           )}
 

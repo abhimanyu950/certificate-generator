@@ -23,29 +23,19 @@ export const verifyCertificate = async (certId: string): Promise<VerificationRes
     }
 
     const data = docSnap.data();
-    
-    if (data.status === 'revoked') {
-      return {
-        isValid: false,
-        status: 'revoked',
-        certificateData: data,
-        reason: 'This certificate has been revoked'
-      };
-    }
 
     // Recompute hash
     const computedHash = await computeCertificateHash({
-      certId: data.certId,
-      recipientName: data.name,
-      courseName: data.course,
-      issueDate: data.date,
-      issuerName: data.issuedBy
+      certId: data.certificateId || '',
+      recipientName: data.recipientName || '',
+      courseName: data.course || '',
+      issueDate: data.issueDate || '',
+      issuerName: data.organizationName || ''
     });
 
-    // If the hash is missing in the database, we check against database data.
-    // If it exists in the database, compare it.
-    if (data.hash && data.hash !== computedHash) {
-      console.warn('Hash mismatch! Computed:', computedHash, 'Stored:', data.hash);
+    // Compare stored sha256 hash with computed hash
+    if (!data.sha256 || data.sha256 !== computedHash) {
+      console.warn('Hash mismatch! Computed:', computedHash, 'Stored:', data.sha256);
       return {
         isValid: false,
         status: 'compromised',

@@ -58,6 +58,54 @@ export class EmailService {
       throw new Error('EmailJS credentials are not configured. Check environment variables or Settings.');
     }
 
+    // Validate required email template fields (Issue 3)
+    const requiredFields = {
+      recipient_name: params.recipient_name,
+      certificate_title: params.certificate_title || params.course_name,
+      certificate_id: params.certificate_id,
+      organization_name: params.organization_name,
+      verification_url: params.verification_url,
+      pdf_url: params.pdf_url || params.download_url
+    };
+
+    const missingFields = Object.entries(requiredFields)
+      .filter(([_, val]) => !val || String(val).trim() === '')
+      .map(([key]) => key);
+
+    if (missingFields.length > 0) {
+      const errMsg = `Validation aborted: Missing required email template fields: ${missingFields.join(', ')}`;
+      console.error(errMsg);
+
+      // Write failure audit log asynchronously before throwing
+      try {
+        await AuditService.logEvent({
+          action: 'EMAIL_FAILED',
+          userId: '',
+          entityType: 'certificate',
+          entityId: params.certificate_id || 'unknown',
+          metadata: {
+            error: errMsg,
+            missingFields,
+            recipientEmail: params.recipient_email
+          }
+        });
+        
+        const logsCol = collection(db, 'email_logs');
+        await addDoc(logsCol, {
+          certificateId: params.certificate_id || 'unknown',
+          recipientEmail: params.recipient_email || 'unknown',
+          templateId: config.templateId || 'unknown',
+          status: 'failed',
+          sentAt: new Date().toISOString(),
+          errorMessage: errMsg
+        });
+      } catch (logErr) {
+        console.error('Failed to log validation error:', logErr);
+      }
+
+      throw new Error(errMsg);
+    }
+
     // Initialize EmailJS
     emailjs.init(config.publicKey);
 

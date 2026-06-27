@@ -71,6 +71,24 @@ const defaultCertSettings: CertSettings = {
   colorText: '#1a1a1a',
 };
 
+const loadLocalCertSettings = (): CertSettings => {
+  try {
+    const data = localStorage.getItem('cf_certSettings');
+    if (data) {
+      const parsed = JSON.parse(data);
+      if (parsed) {
+        return { ...defaultCertSettings, ...parsed };
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to load local certSettings:', e);
+  }
+  return defaultCertSettings;
+};
+
+const initialCertSettings = loadLocalCertSettings();
+
+
 const defaultElements: DesignerElement[] = [
   { id: 'el_border', type: 'border', left: '20px', top: '20px', styles: { width: 'calc(100% - 40px)', height: 'calc(100% - 40px)', border: '4px double #d4af37' } },
   { id: 'el_org', type: 'text', role: 'organisation', left: '271px', top: '60px', value: 'Organisation', styles: { fontSize: '14px', fontWeight: '600', textAlign: 'center', fontFamily: 'Inter', width: '300px' } },
@@ -145,7 +163,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => {
     canvasSize: 'a4-landscape',
     canvasWidth: 842,
     canvasHeight: 595,
-    certSettings: defaultCertSettings,
+    certSettings: initialCertSettings,
     currentTemplate: 'gold',
     background: 'linear-gradient(135deg, #fdfbf7 0%, #f3e5ab 100%)',
     backgroundImage: '',
@@ -157,7 +175,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => {
       canvasSize: 'a4-landscape',
       canvasWidth: 842,
       canvasHeight: 595,
-      certSettings: defaultCertSettings,
+      certSettings: initialCertSettings,
       currentTemplate: 'gold'
     })],
     historyIndex: 0,

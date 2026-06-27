@@ -1,8 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useDesignerStore } from '../store/designerStore';
 import { saveTemplate, deleteTemplate, getTemplates, type TemplateData } from '../services/certificates';
-import { storage } from '../services/firebase';
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { AuditService } from '../services/audit.service';
 
 // Fonts lists
@@ -84,6 +82,10 @@ export default function DesignerPage() {
   const [logoProgress, setLogoProgress] = useState<number | null>(null);
   const [bgProgress, setBgProgress] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState<string>('');
+
+  // Snap alignment guides
+  const [guideX, setGuideX] = useState<number | null>(null);
+  const [guideY, setGuideY] = useState<number | null>(null);
 
   const selectedEl = elements.find(el => el.id === selectedId);
 
@@ -281,15 +283,6 @@ export default function DesignerPage() {
       try {
         await deleteTemplate(id);
         
-        // Log TEMPLATE_DELETED event
-        AuditService.logEvent({
-          action: 'TEMPLATE_DELETED',
-          userId: '',
-          entityType: 'template',
-          entityId: id,
-          metadata: {}
-        });
-
         if (activeTemplateId === id) {
           setActiveTemplateId(null);
           setActiveTemplateName('');
@@ -402,7 +395,7 @@ export default function DesignerPage() {
     }
   };
 
-  // Element mouse drag handler
+  // Element mouse drag handler with smart snapping guides
   const handleDragStart = (e: React.MouseEvent, elId: string) => {
     const element = elements.find(el => el.id === elId);
     if (!element || element.locked) return; // Skip drag if locked
@@ -417,13 +410,107 @@ export default function DesignerPage() {
     const startLeft = parseInt(element.left) || 0;
     const startTop = parseInt(element.top) || 0;
 
+    const elWidth = parseInt(element.styles?.width || '0') || 150;
+    const elHeight = parseInt(element.styles?.height || '0') || 40;
+
     const handleMouseMove = (moveEvent: MouseEvent) => {
       const dx = (moveEvent.clientX - startX) / zoom;
       const dy = (moveEvent.clientY - startY) / zoom;
 
+      let newLeft = startLeft + dx;
+      let newTop = startTop + dy;
+
+      // Smart Alignment Snapping to Canvas Center (5px threshold)
+      const halfW = elWidth / 2;
+      const halfH = elHeight / 2;
+
+      // Horizontal Center Snapping
+      if (Math.abs((newLeft + halfW) - canvasWidth / 2) < 5) {
+        newLeft = canvasWidth / 2 - halfW;
+        setGuideX(canvasWidth / 2);
+      } else {
+        setGuideX(null);
+      }
+
+      // Vertical Center Snapping
+      if (Math.abs((newTop + halfH) - canvasHeight / 2) < 5) {
+        newTop = canvasHeight / 2 - halfH;
+        setGuideY(canvasHeight / 2);
+      } else {
+        setGuideY(null);
+      }
+
       updateElement(elId, {
-        left: `${startLeft + dx}px`,
-        top: `${startTop + dy}px`
+        left: `${newLeft}px`,
+        top: `${newTop}px`
+      });
+    };
+
+    const handleMouseUp = () => {
+      setGuideX(null);
+      setGuideY(null);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      captureHistory();
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
+  // Canva-style corner resize handler
+  const handleResizeStart = (e: React.MouseEvent, elId: string, corner: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const element = elements.find(el => el.id === elId);
+    if (!element || element.locked) return;
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    
+    const startWidth = parseInt(element.styles?.width || '150') || 150;
+    const startHeight = parseInt(element.styles?.height || '40') || 40;
+    const startLeft = parseInt(element.left) || 0;
+    const startTop = parseInt(element.top) || 0;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const dx = (moveEvent.clientX - startX) / zoom;
+      const dy = (moveEvent.clientY - startY) / zoom;
+
+      let newWidth = startWidth;
+      let newHeight = startHeight;
+      let newLeft = startLeft;
+      let newTop = startTop;
+
+      if (corner.includes('e')) {
+        newWidth = Math.max(20, startWidth + dx);
+      }
+      if (corner.includes('s')) {
+        newHeight = Math.max(20, startHeight + dy);
+      }
+      if (corner.includes('w')) {
+        const potentialWidth = startWidth - dx;
+        if (potentialWidth > 20) {
+          newWidth = potentialWidth;
+          newLeft = startLeft + dx;
+        }
+      }
+      if (corner.includes('n')) {
+        const potentialHeight = startHeight - dy;
+        if (potentialHeight > 20) {
+          newHeight = potentialHeight;
+          newTop = startTop + dy;
+        }
+      }
+
+      updateElement(elId, {
+        left: `${newLeft}px`,
+        top: `${newTop}px`,
+        styles: {
+          ...element.styles,
+          width: `${newWidth}px`,
+          height: `${newHeight}px`
+        }
       });
     };
 
@@ -437,8 +524,62 @@ export default function DesignerPage() {
     document.addEventListener('mouseup', handleMouseUp);
   };
 
+  // Keyboard navigation & Nudge support
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        document.activeElement instanceof HTMLInputElement ||
+        document.activeElement instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+
+      if (!selectedId) return;
+      const element = elements.find(el => el.id === selectedId);
+      if (!element) return;
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        if (element.locked) return;
+        deleteElement(selectedId);
+        captureHistory();
+        return;
+      }
+
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        selectElement(null);
+        return;
+      }
+
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        if (element.locked) return;
+        e.preventDefault();
+        const nudgeAmount = e.shiftKey ? 10 : 1;
+        const currentLeft = parseInt(element.left) || 0;
+        const currentTop = parseInt(element.top) || 0;
+        
+        let newLeft = currentLeft;
+        let newTop = currentTop;
+
+        if (e.key === 'ArrowLeft') newLeft -= nudgeAmount;
+        if (e.key === 'ArrowRight') newLeft += nudgeAmount;
+        if (e.key === 'ArrowUp') newTop -= nudgeAmount;
+        if (e.key === 'ArrowDown') newTop += nudgeAmount;
+
+        updateElement(selectedId, {
+          left: `${newLeft}px`,
+          top: `${newTop}px`
+        });
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedId, elements]);
+
   // Upload organization background templates
-  const handleBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBgUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -454,62 +595,25 @@ export default function DesignerPage() {
     setUploadError('');
     setBgProgress(0);
 
-    // Create local object URL for instant preview on canvas
-    const previewUrl = URL.createObjectURL(file);
-    
-    // Stage 5 & 6: ELEMENT_CREATED & CANVAS_UPDATED
-    console.log('ELEMENT_CREATED', { type: 'background', url: previewUrl });
-    useDesignerStore.setState({ backgroundImage: previewUrl });
-    captureHistory();
-    console.log('CANVAS_UPDATED', { type: 'background', backgroundImage: previewUrl });
-
-    // Stage 2: UPLOAD_STARTED
-    console.log('UPLOAD_STARTED', { type: 'background' });
-
-    try {
-      const fileRef = ref(storage, `backgrounds/${Date.now()}_${file.name}`);
-      const uploadTask = uploadBytesResumable(fileRef, file);
-
-      uploadTask.on('state_changed',
-        (snapshot) => {
-          const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
-          setBgProgress(progress);
-        },
-        (error) => {
-          console.warn('Firebase Storage error for background, continuing with local preview:', error);
-          setBgProgress(null);
-        },
-        async () => {
-          try {
-            // Stage 3: UPLOAD_SUCCESS
-            console.log('UPLOAD_SUCCESS', { type: 'background' });
-
-            // Stage 4: DOWNLOAD_URL_CREATED
-            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-            console.log('DOWNLOAD_URL_CREATED', { type: 'background', url: downloadUrl });
-
-            // Upgrade local preview with permanent storage URL
-            useDesignerStore.setState({ backgroundImage: downloadUrl });
-            captureHistory();
-            
-            // Stage 6: CANVAS_UPDATED
-            console.log('CANVAS_UPDATED', { type: 'background', backgroundImage: downloadUrl });
-          } catch (err: any) {
-            console.error('Failed to resolve background URL:', err);
-            setUploadError('Failed to resolve background URL.');
-          } finally {
-            setBgProgress(null);
-          }
-        }
-      );
-    } catch (syncError: any) {
-      console.warn('Firebase Storage synchronous upload error for background, keeping local preview:', syncError);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64Url = event.target?.result as string;
+      if (base64Url) {
+        useDesignerStore.setState({ backgroundImage: base64Url });
+        captureHistory();
+        console.log('BACKGROUND_UPDATED', { type: 'background', url: base64Url });
+        setBgProgress(null);
+      }
+    };
+    reader.onerror = () => {
+      setUploadError('Failed to read background image file.');
       setBgProgress(null);
-    }
+    };
+    reader.readAsDataURL(file);
   };
 
   // Upload element images (logos)
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -525,62 +629,22 @@ export default function DesignerPage() {
     setUploadError('');
     setLogoProgress(0);
 
-    // Create local object URL for instant preview on canvas
-    const previewUrl = URL.createObjectURL(file);
-    
-    // Add image element with local preview URL
-    addElement('image', previewUrl);
-    const addedElementId = useDesignerStore.getState().selectedId;
-    
-    // Stage 5 & 6: ELEMENT_CREATED & CANVAS_UPDATED
-    console.log('ELEMENT_CREATED', { type: 'logo', elementId: addedElementId, url: previewUrl });
-    console.log('CANVAS_UPDATED', { type: 'logo' });
-
-    // Stage 2: UPLOAD_STARTED
-    console.log('UPLOAD_STARTED', { type: 'logo' });
-
-    try {
-      const fileRef = ref(storage, `logos/${Date.now()}_${file.name}`);
-      const uploadTask = uploadBytesResumable(fileRef, file);
-
-      uploadTask.on('state_changed',
-        (snapshot) => {
-          const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
-          setLogoProgress(progress);
-        },
-        (error) => {
-          console.warn('Firebase Storage error for logo, continuing with local preview:', error);
-          setLogoProgress(null);
-        },
-        async () => {
-          try {
-            // Stage 3: UPLOAD_SUCCESS
-            console.log('UPLOAD_SUCCESS', { type: 'logo' });
-
-            // Stage 4: DOWNLOAD_URL_CREATED
-            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-            console.log('DOWNLOAD_URL_CREATED', { type: 'logo', url: downloadUrl });
-
-            // Upgrade local preview with permanent storage URL
-            if (addedElementId) {
-              updateElement(addedElementId, { value: downloadUrl });
-              captureHistory();
-            }
-            
-            // Stage 6: CANVAS_UPDATED
-            console.log('CANVAS_UPDATED', { type: 'logo' });
-          } catch (err: any) {
-            console.error('Failed to resolve logo image URL:', err);
-            setUploadError('Failed to resolve logo image URL.');
-          } finally {
-            setLogoProgress(null);
-          }
-        }
-      );
-    } catch (syncError: any) {
-      console.warn('Firebase Storage synchronous upload error for logo, keeping local preview:', syncError);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64Url = event.target?.result as string;
+      if (base64Url) {
+        addElement('image', base64Url);
+        const addedElementId = useDesignerStore.getState().selectedId;
+        console.log('ELEMENT_CREATED', { type: 'logo', elementId: addedElementId, url: base64Url });
+        console.log('CANVAS_UPDATED', { type: 'logo' });
+        setLogoProgress(null);
+      }
+    };
+    reader.onerror = () => {
+      setUploadError('Failed to read image file.');
       setLogoProgress(null);
-    }
+    };
+    reader.readAsDataURL(file);
   };
 
   // Save/Update template in database
@@ -1068,6 +1132,138 @@ export default function DesignerPage() {
                 transformOrigin: 'center'
               }}
             >
+              {/* Snap Alignment Guides */}
+              {guideX !== null && (
+                <div 
+                  className="absolute border-l border-dashed border-secondary pointer-events-none z-50 animate-pulse"
+                  style={{
+                    left: `${guideX}px`,
+                    top: 0,
+                    bottom: 0,
+                    height: '100%'
+                  }}
+                />
+              )}
+              {guideY !== null && (
+                <div 
+                  className="absolute border-t border-dashed border-secondary pointer-events-none z-50 animate-pulse"
+                  style={{
+                    top: `${guideY}px`,
+                    left: 0,
+                    right: 0,
+                    width: '100%'
+                  }}
+                />
+              )}
+
+              {/* Floating Context Toolbar */}
+              {selectedId && (() => {
+                const el = elements.find(e => e.id === selectedId);
+                if (!el) return null;
+                
+                const leftVal = parseInt(el.left) || 0;
+                const topVal = parseInt(el.top) || 0;
+                const elWidth = parseInt(el.styles?.width || '150') || 150;
+                
+                // Position it 45px above the element
+                const toolbarTop = Math.max(-40, topVal - 45);
+                const toolbarLeft = leftVal + (elWidth / 2);
+
+                return (
+                  <div 
+                    className="absolute bg-white shadow-xl border border-outline-variant rounded-full px-2.5 py-1 flex items-center gap-1 z-[100] -translate-x-1/2 select-none transition-all"
+                    style={{ 
+                      top: `${toolbarTop}px`, 
+                      left: `${toolbarLeft}px` 
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()} // Prevent canvas dragging
+                  >
+                    <button 
+                      onClick={() => {
+                        updateElement(el.id, { locked: !el.locked });
+                        captureHistory();
+                      }}
+                      className={`p-1 hover:bg-surface-container rounded-full text-xs flex items-center justify-center ${el.locked ? 'text-red-500 bg-red-50' : 'text-on-surface-variant'}`}
+                      title={el.locked ? 'Unlock element' : 'Lock element'}
+                    >
+                      <span className="material-symbols-outlined text-[15px]">{el.locked ? 'lock' : 'lock_open'}</span>
+                    </button>
+
+                    <div className="w-px h-3.5 bg-outline-variant" />
+
+                    {/* Move up / Move down in z-index */}
+                    <button 
+                      onClick={() => {
+                        const curZ = el.styles?.zIndex || 10;
+                        updateElement(el.id, { styles: { ...el.styles, zIndex: Math.max(1, curZ - 1) } });
+                        captureHistory();
+                      }}
+                      disabled={el.locked}
+                      className="p-1 hover:bg-surface-container rounded-full text-on-surface-variant text-xs flex items-center justify-center disabled:opacity-30"
+                      title="Send backward"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">flip_to_back</span>
+                    </button>
+                    <button 
+                      onClick={() => {
+                        const curZ = el.styles?.zIndex || 10;
+                        updateElement(el.id, { styles: { ...el.styles, zIndex: curZ + 1 } });
+                        captureHistory();
+                      }}
+                      disabled={el.locked}
+                      className="p-1 hover:bg-surface-container rounded-full text-on-surface-variant text-xs flex items-center justify-center disabled:opacity-30"
+                      title="Bring forward"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">flip_to_front</span>
+                    </button>
+
+                    <div className="w-px h-3.5 bg-outline-variant" />
+
+                    {/* Duplicate */}
+                    <button 
+                      onClick={() => {
+                        if (el.locked) return;
+                        // Add new duplicated element
+                        const newId = `el_${Date.now()}`;
+                        const dup = {
+                          ...el,
+                          id: newId,
+                          left: `${leftVal + 20}px`,
+                          top: `${topVal + 20}px`,
+                          locked: false
+                        };
+                        useDesignerStore.setState({
+                          elements: [...elements, dup],
+                          selectedId: newId
+                        });
+                        captureHistory();
+                      }}
+                      disabled={el.locked}
+                      className="p-1 hover:bg-surface-container rounded-full text-on-surface-variant text-xs flex items-center justify-center disabled:opacity-30"
+                      title="Duplicate element"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">content_copy</span>
+                    </button>
+
+                    <div className="w-px h-3.5 bg-outline-variant" />
+
+                    {/* Delete */}
+                    <button 
+                      onClick={() => {
+                        if (el.locked) return;
+                        deleteElement(el.id);
+                        captureHistory();
+                      }}
+                      disabled={el.locked}
+                      className="p-1 hover:bg-red-50 hover:text-red-500 rounded-full text-on-surface-variant text-xs flex items-center justify-center disabled:opacity-30"
+                      title="Delete element"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">delete</span>
+                    </button>
+                  </div>
+                );
+              })()}
+
               {elements.map((el) => {
                 if (el.hidden) return null;
                 const isSelected = el.id === selectedId;
@@ -1095,6 +1291,28 @@ export default function DesignerPage() {
                       <div className="absolute -top-2.5 -right-2.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center shadow-md z-30">
                         <span className="material-symbols-outlined text-[10px] font-bold">lock</span>
                       </div>
+                    )}
+
+                    {isSelected && !isLocked && (
+                      <>
+                        {/* Corner Resize Handles */}
+                        <div 
+                          className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white border border-secondary rounded-full cursor-nwse-resize z-40 hover:scale-125 transition-transform" 
+                          onMouseDown={(e) => handleResizeStart(e, el.id, 'nw')}
+                        />
+                        <div 
+                          className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border border-secondary rounded-full cursor-nesw-resize z-40 hover:scale-125 transition-transform" 
+                          onMouseDown={(e) => handleResizeStart(e, el.id, 'ne')}
+                        />
+                        <div 
+                          className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white border border-secondary rounded-full cursor-nesw-resize z-40 hover:scale-125 transition-transform" 
+                          onMouseDown={(e) => handleResizeStart(e, el.id, 'sw')}
+                        />
+                        <div 
+                          className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white border border-secondary rounded-full cursor-nwse-resize z-40 hover:scale-125 transition-transform" 
+                          onMouseDown={(e) => handleResizeStart(e, el.id, 'se')}
+                        />
+                      </>
                     )}
 
                     {el.type === 'text' && (

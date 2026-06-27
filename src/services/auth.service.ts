@@ -16,6 +16,7 @@ import {
 } from '../firebase/firestore';
 import type { UserProfile } from '../firebase/firestore';
 
+
 export class AuthService {
   // Signs in via Email, fetches Firestore profile, rejects if account is disabled.
   static async emailLogin(email: string, pass: string): Promise<UserProfile> {

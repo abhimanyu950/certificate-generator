@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRecipientStore } from '../store/recipientStore';
 import { EmailService } from '../services/email.service';
 import { useDesignerStore } from '../store/designerStore';
-import { db } from '../services/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { db, auth } from '../services/firebase';
+import { doc, getDoc, setDoc, getDocs, collection, query, orderBy } from 'firebase/firestore';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -61,6 +61,33 @@ export default function CampaignPage() {
   const [failedCount, setFailedCount] = useState(0);
   const [campaignLogs, setCampaignLogs] = useState<string[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
+
+  useEffect(() => {
+    const fetchCampaigns = async () => {
+      try {
+        const q = query(collection(db, 'campaigns'), orderBy('generatedAt', 'desc'));
+        const snapshot = await getDocs(q);
+        const list: any[] = [];
+        snapshot.forEach(docSnap => {
+          const data = docSnap.data();
+          list.push({
+            id: docSnap.id,
+            name: data.name || 'Unnamed Campaign',
+            date: data.generatedAt ? new Date(data.generatedAt).toLocaleDateString() : 'N/A',
+            status: 'Finished',
+            sent: data.successfulEmails || 0,
+            failed: data.failedEmails || 0
+          });
+        });
+        if (list.length > 0) {
+          setCampaignList(list);
+        }
+      } catch (e) {
+        console.error('Failed to load campaigns:', e);
+      }
+    };
+    fetchCampaigns();
+  }, []);
 
   const toggleRecipient = (id: string | number) => {
     setSelectedRecipients(prev => 
@@ -191,8 +218,24 @@ export default function CampaignPage() {
     }
 
     // Add completed campaign to list
+    const campaignId = `c_${Date.now()}`;
+    const newCampDoc = {
+      campaignId,
+      name: campaignName,
+      totalRecipients: selectedRecipients.length,
+      successfulEmails: localSent,
+      failedEmails: localFailed,
+      generatedAt: new Date().toISOString(),
+      createdBy: auth.currentUser?.uid || 'anonymous'
+    };
+    try {
+      await setDoc(doc(db, 'campaigns', campaignId), newCampDoc);
+    } catch (dbErr) {
+      console.error('Failed to save campaign in Firestore:', dbErr);
+    }
+
     const newCamp = {
-      id: `c_${Date.now()}`,
+      id: campaignId,
       name: campaignName,
       date: new Date().toLocaleDateString(),
       status: 'Finished',

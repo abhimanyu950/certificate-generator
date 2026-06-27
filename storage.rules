@@ -7,22 +7,33 @@ service firebase.storage {
       return request.auth != null;
     }
 
+    // Cross-service role lookup
+    function isIssuer() {
+      return isSignedIn() &&
+        firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role in ['issuer', 'admin', 'super_admin'] &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.disabled != true;
+     }
+
     // Rules for certificates folder (PDFs)
     match /certificates/{allPaths=**} {
-      allow read: if true; // Public read for public verification page links
-      allow write: if isSignedIn(); // Only signed-in administrators can create/modify
+      allow get: if true; // Public read access for individual verification links
+      allow list: if isSignedIn(); // Restrict file lists to administrators
+      allow write: if isIssuer(); // Block low-privilege roles
     }
 
     // Rules for templates folder
     match /templates/{allPaths=**} {
-      allow read: if true; // Public read for rendering certificate previews
-      allow write: if isSignedIn(); // Only signed-in users can upload layouts/designs
+      allow get: if true;
+      allow list: if isSignedIn();
+      allow write: if isIssuer();
     }
 
     // Rules for logos, signatures, and assets
     match /assets/{allPaths=**} {
-      allow read: if true;
-      allow write: if isSignedIn();
+      allow get: if true;
+      allow list: if isSignedIn();
+      allow write: if isIssuer();
     }
   }
 }

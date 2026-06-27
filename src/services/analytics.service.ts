@@ -331,5 +331,203 @@ export class AnalyticsService {
       return [];
     }
   }
+
+  /**
+   * Get certificates issued today.
+   */
+  static async getCertificatesIssuedToday(): Promise<number> {
+    try {
+      const certsCol = collection(db, 'certificates');
+      const snapshot = await getDocs(certsCol);
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      let count = 0;
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        let date: Date | null = null;
+        if (data.issuedAt) {
+          date = data.issuedAt.toDate ? data.issuedAt.toDate() : new Date(data.issuedAt);
+        }
+        if (date && date >= startOfToday) {
+          count++;
+        }
+      });
+      return count;
+    } catch (e) {
+      console.error('Error in getCertificatesIssuedToday:', e);
+      return 0;
+    }
+  }
+
+  /**
+   * Get certificates issued this month.
+   */
+  static async getCertificatesIssuedThisMonth(): Promise<number> {
+    try {
+      const certsCol = collection(db, 'certificates');
+      const snapshot = await getDocs(certsCol);
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+      let count = 0;
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        let date: Date | null = null;
+        if (data.issuedAt) {
+          date = data.issuedAt.toDate ? data.issuedAt.toDate() : new Date(data.issuedAt);
+        }
+        if (date && date >= startOfMonth) {
+          count++;
+        }
+      });
+      return count;
+    } catch (e) {
+      console.error('Error in getCertificatesIssuedThisMonth:', e);
+      return 0;
+    }
+  }
+
+  /**
+   * Get verification requests today.
+   */
+  static async getVerificationRequestsToday(): Promise<number> {
+    try {
+      const logsCol = collection(db, 'audit_logs');
+      const q = query(logsCol, where('action', '==', 'CERTIFICATE_VERIFIED'));
+      const snapshot = await getDocs(q);
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      let count = 0;
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        let date: Date | null = null;
+        if (data.timestamp) {
+          date = data.timestamp.toDate ? data.timestamp.toDate() : new Date(data.timestamp);
+        }
+        if (date && date >= startOfToday) {
+          count++;
+        }
+      });
+      return count;
+    } catch (e) {
+      console.error('Error in getVerificationRequestsToday:', e);
+      return 0;
+    }
+  }
+
+  /**
+   * Get active users count.
+   */
+  static async getActiveUsersCount(): Promise<number> {
+    try {
+      const usersCol = collection(db, 'users');
+      const snapshot = await getDocs(usersCol);
+      let count = 0;
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.disabled !== true) {
+          count++;
+        }
+      });
+      return count;
+    } catch (e) {
+      console.error('Error in getActiveUsersCount:', e);
+      return 0;
+    }
+  }
+
+  /**
+   * Get revoked certificates count.
+   */
+  static async getRevokedCertificatesCount(): Promise<number> {
+    try {
+      const certsCol = collection(db, 'certificates');
+      const q = query(certsCol, where('status', '==', 'revoked'));
+      const snapshot = await getDocs(q);
+      return snapshot.size;
+    } catch (e) {
+      console.error('Error in getRevokedCertificatesCount:', e);
+      return 0;
+    }
+  }
+
+  /**
+   * Get Firestore and Storage operations estimate for Cost Monitoring.
+   */
+  static async getResourceUsageEstimate(): Promise<{
+    reads: number;
+    writes: number;
+    storageGb: number;
+    estimatedCost: number;
+  }> {
+    try {
+      // Fetch collections to count documents representing reads/writes
+      const certs = await getDocs(collection(db, 'certificates'));
+      const logs = await getDocs(collection(db, 'audit_logs'));
+      const emailLogs = await getDocs(collection(db, 'email_logs'));
+
+      const certsCount = certs.size;
+      const logsCount = logs.size;
+      const emailCount = emailLogs.size;
+
+      // Operations Estimates
+      // Writes = certificates + audit logs + email logs + system errors
+      const writes = certsCount + logsCount + emailCount;
+      // Reads = roughly 10x writes (simulated user queries, dashboards reads) + active lookups
+      const reads = (writes * 10) + 1500;
+
+      // Costs: Firestore Reads ($0.06/100k), Firestore Writes ($0.18/100k)
+      const firestoreReadCost = (reads / 100000) * 0.06;
+      const firestoreWriteCost = (writes / 100000) * 0.18;
+
+      const estimatedCost = firestoreReadCost + firestoreWriteCost;
+
+      return {
+        reads,
+        writes,
+        storageGb: 0,
+        estimatedCost: parseFloat(estimatedCost.toFixed(2))
+      };
+    } catch (e) {
+      console.error('Error in getResourceUsageEstimate:', e);
+      return { reads: 0, writes: 0, storageGb: 0, estimatedCost: 0 };
+    }
+  }
+
+  /**
+   * Get Security Events feed from audit logs.
+   */
+  static async getSecurityEvents(limitCount = 50): Promise<any[]> {
+    try {
+      const logsCol = collection(db, 'audit_logs');
+      const snapshot = await getDocs(logsCol);
+      
+      const list: any[] = [];
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        if (
+          data.action === 'LOGIN_FAILED' ||
+          data.action === 'PERMISSION_DENIED' ||
+          data.action === 'SECURITY_ALERT' ||
+          data.action === 'USER_DISABLED' ||
+          data.action === 'CERTIFICATE_REVOKED'
+        ) {
+          list.push({
+            id: docSnap.id,
+            ...data,
+            timestamp: data.timestamp?.toDate ? data.timestamp.toDate().toISOString() : data.timestamp
+          });
+        }
+      });
+
+      // Sort by timestamp desc and limit
+      return list
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+        .slice(0, limitCount);
+    } catch (e) {
+      console.error('Error in getSecurityEvents:', e);
+      return [];
+    }
+  }
 }
 

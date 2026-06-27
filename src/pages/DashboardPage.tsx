@@ -23,6 +23,14 @@ export default function DashboardPage() {
   const [recentLogs, setRecentLogs] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
+  // System Health States (Phase 1)
+  const [issuedToday, setIssuedToday] = useState<number>(0);
+  const [issuedThisMonth, setIssuedThisMonth] = useState<number>(0);
+  const [verifsToday, setVerifsToday] = useState<number>(0);
+  const [activeUsers, setActiveUsers] = useState<number>(0);
+  const [revokedCount, setRevokedCount] = useState<number>(0);
+  const [failedEmailsCount, setFailedEmailsCount] = useState<number>(0);
+
   useEffect(() => {
     // 1. Subscribe to certificates collection changes
     const unsubCerts = onSnapshot(collection(db, 'certificates'), async () => {
@@ -32,12 +40,20 @@ export default function DashboardPage() {
         
         const monthlyTrends = await AnalyticsService.getMonthlyIssuance();
         setTrends(monthlyTrends);
+
+        // Fetch health counts
+        const today = await AnalyticsService.getCertificatesIssuedToday();
+        setIssuedToday(today);
+        const thisMonth = await AnalyticsService.getCertificatesIssuedThisMonth();
+        setIssuedThisMonth(thisMonth);
+        const revoked = await AnalyticsService.getRevokedCertificatesCount();
+        setRevokedCount(revoked);
       } catch (err) {
         console.error('Error fetching certificates stats:', err);
       }
     });
 
-    // 2. Subscribe to audit logs collection changes
+    // 2. Subscribe to audit logs / verification logs collection changes
     const unsubLogs = onSnapshot(collection(db, 'audit_logs'), async () => {
       try {
         const verifData = await AnalyticsService.getVerificationRate();
@@ -46,12 +62,19 @@ export default function DashboardPage() {
 
         const emailData = await AnalyticsService.getEmailMetrics();
         setEmailSuccessRate(emailData.successRate);
+        setFailedEmailsCount(emailData.totalFailed);
 
         const recent = await AnalyticsService.getRecentActivity(5);
         setRecentLogs(recent);
 
         const trafficData = await AnalyticsService.getVerificationTraffic();
         setTraffic(trafficData);
+
+        // Fetch health logs & user details
+        const verifsTdy = await AnalyticsService.getVerificationRequestsToday();
+        setVerifsToday(verifsTdy);
+        const activeUsrs = await AnalyticsService.getActiveUsersCount();
+        setActiveUsers(activeUsrs);
       } catch (err) {
         console.error('Error fetching audit logs stats:', err);
       } finally {
@@ -159,6 +182,13 @@ export default function DashboardPage() {
         tagColor = 'bg-purple-100 text-purple-700';
         tagText = 'SESSION';
         break;
+      case 'STORAGE_FALLBACK_USED':
+        icon = 'cloud_off';
+        title = 'Storage Fallback Used';
+        desc = `Firebase Storage upload skipped/failed: ${log.metadata?.reason || 'Using database fallback'}.`;
+        tagColor = 'bg-amber-100 text-amber-700 border border-amber-200';
+        tagText = 'WARNING';
+        break;
     }
 
     return (
@@ -231,6 +261,38 @@ export default function DashboardPage() {
           <div className="w-full bg-surface-container-low h-1.5 rounded-full mt-3 overflow-hidden">
             <div className="bg-green-600 h-full rounded-full" style={{ width: `${emailSuccessRate}%` }}></div>
           </div>
+        </div>
+      </section>
+
+      {/* System Health Telemetry Dashboard (Phase 1) */}
+      <section className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4" role="region" aria-label="System Health Telemetry">
+        <div className="bg-white border border-outline-variant rounded-xl p-4 shadow-sm">
+          <p className="text-[9px] text-on-surface-variant font-bold uppercase tracking-wider">Issued Today</p>
+          <p className="text-lg font-black text-secondary mt-1">{issuedToday}</p>
+        </div>
+        <div className="bg-white border border-outline-variant rounded-xl p-4 shadow-sm">
+          <p className="text-[9px] text-on-surface-variant font-bold uppercase tracking-wider">Issued This Month</p>
+          <p className="text-lg font-black text-secondary mt-1">{issuedThisMonth}</p>
+        </div>
+        <div className="bg-white border border-outline-variant rounded-xl p-4 shadow-sm">
+          <p className="text-[9px] text-on-surface-variant font-bold uppercase tracking-wider">Verifications Today</p>
+          <p className="text-lg font-black text-secondary mt-1">{verifsToday}</p>
+        </div>
+        <div className="bg-white border border-outline-variant rounded-xl p-4 shadow-sm">
+          <p className="text-[9px] text-on-surface-variant font-bold uppercase tracking-wider">Active Users</p>
+          <p className="text-lg font-black text-secondary mt-1">{activeUsers}</p>
+        </div>
+        <div className="bg-white border border-outline-variant rounded-xl p-4 shadow-sm">
+          <p className="text-[9px] text-red-600 font-bold uppercase tracking-wider">Revoked Certs</p>
+          <p className="text-lg font-black text-red-600 mt-1">{revokedCount}</p>
+        </div>
+        <div className="bg-white border border-outline-variant rounded-xl p-4 shadow-sm">
+          <p className="text-[9px] text-red-600 font-bold uppercase tracking-wider">Email Failure Rate</p>
+          <p className="text-lg font-black text-red-600 mt-1">{(100 - emailSuccessRate).toFixed(1)}%</p>
+        </div>
+        <div className="bg-white border border-outline-variant rounded-xl p-4 shadow-sm border-red-200 bg-red-50/10">
+          <p className="text-[9px] text-red-600 font-bold uppercase tracking-wider">Failed Emails</p>
+          <p className="text-lg font-black text-red-600 mt-1">{failedEmailsCount}</p>
         </div>
       </section>
 

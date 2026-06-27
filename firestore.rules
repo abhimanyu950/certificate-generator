@@ -7,43 +7,57 @@ service cloud.firestore {
       return request.auth != null;
     }
     
-    // Helper: Get user's role from the users collection
-    function getUserRole() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
-    }
-    
-    // Helper: Check if user profile is disabled
-    function isNotDisabled() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.disabled != true;
+    // Helper: check if a user document exists and has a specific role, while being not disabled
+    function hasRole(role) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == role ||
+          (role == 'super_admin' && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'SUPER_ADMIN')
+        ) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.disabled != true;
     }
 
-    // Helper: Role validation checks
+    // Helper: Check if user profile is disabled
+    function isNotDisabled() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.disabled != true;
+    }
+
+    // Role validation helpers
     function isSuperAdmin() {
-      return isSignedIn() && getUserRole() == 'super_admin' && isNotDisabled();
+      return hasRole('super_admin');
     }
     
     function isAdmin() {
-      return isSignedIn() && (getUserRole() == 'admin' || getUserRole() == 'super_admin') && isNotDisabled();
+      return hasRole('admin') || hasRole('super_admin');
     }
     
     function isIssuer() {
-      return isSignedIn() && (getUserRole() == 'issuer' || getUserRole() == 'admin' || getUserRole() == 'super_admin') && isNotDisabled();
-    }
-    
-    function isViewer() {
-      return isSignedIn() && isNotDisabled();
+      return hasRole('issuer') || hasRole('admin') || hasRole('super_admin');
     }
 
     // Rules for users collection
     match /users/{userId} {
-      allow read: if isSignedIn() && isNotDisabled();
-      allow create: if isSuperAdmin();
+      allow read: if isSignedIn() && (request.auth.uid == userId || isNotDisabled());
+      // Allow super admins to create profiles, OR new users to register/recreate their own initial viewer profiles
+      allow create: if isSuperAdmin() || (
+        isSignedIn() && 
+        request.auth.uid == userId &&
+        request.resource.data.role == 'viewer' &&
+        request.resource.data.disabled == false
+      );
       allow update: if isSuperAdmin() || (
         request.auth.uid == userId && 
         isNotDisabled() && 
         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'disabled'])
       );
       allow delete: if isSuperAdmin();
+    }
+
+    // Rules for campaigns collection
+    match /campaigns/{campaignId} {
+      allow read, write: if isSignedIn() && isNotDisabled();
     }
 
     // Rules for templates collection
@@ -66,17 +80,30 @@ service cloud.firestore {
 
     // Rules for audit_logs collection
     match /audit_logs/{logId} {
-      allow create: if true;
+      // Allow authenticated user writes, or public writes strictly for certificate verifications
+      allow create: if (isSignedIn() && isNotDisabled()) || (
+        request.resource.data.action == 'CERTIFICATE_VERIFIED' &&
+        request.resource.data.userId == 'public'
+      );
       allow read: if isSignedIn() && isNotDisabled();
       allow update, delete: if isSuperAdmin();
     }
 
     // Rules for email_logs collection
     match /email_logs/{logId} {
-      allow create: if true;
+      allow create: if isSignedIn() && isNotDisabled();
+      allow read: if isSignedIn() && isNotDisabled();
+      allow update, delete: if isSuperAdmin();
+    }
+
+    // Rules for system_errors collection
+    match /system_errors/{errorId} {
+      allow create: if (isSignedIn() && isNotDisabled()) || (
+        request.resource.data.errorType in ['VERIFICATION_FAILED', 'SECURITY_VIOLATION'] &&
+        request.resource.data.userId == 'public'
+      );
       allow read: if isSignedIn() && isNotDisabled();
       allow update, delete: if isSuperAdmin();
     }
   }
 }
-

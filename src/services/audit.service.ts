@@ -3,22 +3,15 @@ import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 export interface AuditLog {
   action:
+    | 'LOGIN'
+    | 'LOGOUT'
+    | 'CSV_IMPORT'
     | 'CERTIFICATE_GENERATED'
-    | 'CERTIFICATE_DOWNLOADED'
-    | 'CERTIFICATE_VERIFIED'
-    | 'CERTIFICATE_REVOKED'
-    | 'RECIPIENT_CREATED'
-    | 'RECIPIENT_IMPORTED'
-    | 'RECIPIENT_UPDATED'
-    | 'TEMPLATE_CREATED'
-    | 'TEMPLATE_UPDATED'
-    | 'TEMPLATE_DELETED'
     | 'EMAIL_SENT'
-    | 'EMAIL_DELIVERED'
     | 'EMAIL_FAILED'
-    | 'LOGIN_SUCCESS'
-    | 'LOGIN_FAILED'
-    | 'LOGOUT';
+    | 'CERTIFICATE_VERIFIED'
+    | 'TEMPLATE_CREATED'
+    | 'TEMPLATE_UPDATED';
   userId: string;
   timestamp?: any;
   entityType: 'certificate' | 'template' | 'recipient' | 'user' | 'system';

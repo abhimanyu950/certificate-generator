@@ -26,26 +26,26 @@ export const useAuthStore = create<AuthState>((set) => ({
       const profile = await AuthService.emailLogin(email, pass);
       set({ user: profile, isAuthenticated: true, isLoading: false });
       
-      // Log LOGIN_SUCCESS asynchronously
+      // Log LOGIN asynchronously
       AuditService.logEvent({
-        action: 'LOGIN_SUCCESS',
+        action: 'LOGIN',
         userId: profile.uid,
         entityType: 'user',
         entityId: profile.uid,
-        metadata: { email: profile.email, name: profile.name, role: profile.role }
+        metadata: { email: profile.email, name: profile.name, role: profile.role, status: 'success' }
       });
 
       return profile;
     } catch (e: any) {
       set({ isLoading: false });
       
-      // Log LOGIN_FAILED asynchronously
+      // Log LOGIN asynchronously
       AuditService.logEvent({
-        action: 'LOGIN_FAILED',
+        action: 'LOGIN',
         userId: 'anonymous',
         entityType: 'user',
         entityId: email,
-        metadata: { email, error: e.message || String(e) }
+        metadata: { email, error: e.message || String(e), status: 'failed' }
       });
 
       throw e;
@@ -58,26 +58,26 @@ export const useAuthStore = create<AuthState>((set) => ({
       const profile = await AuthService.googleSignIn();
       set({ user: profile, isAuthenticated: true, isLoading: false });
       
-      // Log LOGIN_SUCCESS asynchronously
+      // Log LOGIN asynchronously
       AuditService.logEvent({
-        action: 'LOGIN_SUCCESS',
+        action: 'LOGIN',
         userId: profile.uid,
         entityType: 'user',
         entityId: profile.uid,
-        metadata: { email: profile.email, name: profile.name, role: profile.role, method: 'google' }
+        metadata: { email: profile.email, name: profile.name, role: profile.role, method: 'google', status: 'success' }
       });
 
       return profile;
     } catch (e: any) {
       set({ isLoading: false });
       
-      // Log LOGIN_FAILED asynchronously
+      // Log LOGIN asynchronously
       AuditService.logEvent({
-        action: 'LOGIN_FAILED',
+        action: 'LOGIN',
         userId: 'anonymous',
         entityType: 'user',
         entityId: 'google_oauth',
-        metadata: { error: e.message || String(e) }
+        metadata: { error: e.message || String(e), status: 'failed' }
       });
 
       throw e;

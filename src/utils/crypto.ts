@@ -15,6 +15,6 @@ export interface CertificateHashPayload {
 }
 
 export const computeCertificateHash = async (payload: CertificateHashPayload): Promise<string> => {
-  const contentString = `${payload.certId}|${payload.recipientName.trim()}|${payload.courseName.trim()}|${payload.issueDate}|${payload.issuerName.trim()}`;
+  const contentString = payload.certId + payload.recipientName + payload.courseName + payload.issueDate + payload.issuerName;
   return generateSHA256(contentString);
 };

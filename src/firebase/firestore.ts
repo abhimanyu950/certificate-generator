@@ -1,10 +1,11 @@
-import { db } from '../services/firebase';
+import { db, auth } from '../services/firebase';
 import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs } from 'firebase/firestore';
 
 export interface UserProfile {
   uid: string;
   email: string;
   name: string;
+  displayName?: string;
   role: 'super_admin' | 'admin' | 'issuer' | 'viewer';
   org?: string;
   createdAt: string;
@@ -16,10 +17,62 @@ export interface UserProfile {
 export const getUserProfile = async (uid: string): Promise<UserProfile | null> => {
   try {
     const userDocRef = doc(db, 'users', uid);
-    const docSnap = await getDoc(userDocRef);
-    if (docSnap.exists()) {
-      return docSnap.data() as UserProfile;
+    let docSnap;
+    try {
+      docSnap = await getDoc(userDocRef);
+    } catch (e: any) {
+      if (e.code === 'permission-denied' || e.message?.includes('permission') || e.message?.includes('denied')) {
+        const currentUser = auth.currentUser;
+        if (currentUser && currentUser.uid === uid) {
+          const newProfile = {
+            uid: uid,
+            email: currentUser.email || '',
+            displayName: currentUser.displayName || currentUser.email?.split('@')[0] || 'User',
+            role: 'viewer',
+            createdAt: new Date().toISOString(),
+            lastLogin: new Date().toISOString(),
+            disabled: false
+          };
+          await setDoc(userDocRef, newProfile);
+          return {
+            ...newProfile,
+            name: newProfile.displayName,
+            role: 'viewer'
+          } as UserProfile;
+        }
+      }
+      throw e;
     }
+
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      const role = data.role === 'SUPER_ADMIN' ? 'super_admin' : data.role;
+      return {
+        ...data,
+        role,
+        name: data.name || data.displayName || data.email?.split('@')[0] || 'User'
+      } as UserProfile;
+    }
+
+    const currentUser = auth.currentUser;
+    if (currentUser && currentUser.uid === uid) {
+      const newProfile = {
+        uid: uid,
+        email: currentUser.email || '',
+        displayName: currentUser.displayName || currentUser.email?.split('@')[0] || 'User',
+        role: 'viewer',
+        createdAt: new Date().toISOString(),
+        lastLogin: new Date().toISOString(),
+        disabled: false
+      };
+      await setDoc(userDocRef, newProfile);
+      return {
+        ...newProfile,
+        name: newProfile.displayName,
+        role: 'viewer'
+      } as UserProfile;
+    }
+
     return null;
   } catch (error) {
     console.error('Error fetching user profile:', error);

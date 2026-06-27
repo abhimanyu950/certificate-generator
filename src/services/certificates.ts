@@ -8,8 +8,10 @@ import {
   orderBy, 
   limit, 
   Timestamp,
-  deleteDoc
+  deleteDoc,
+  updateDoc
 } from 'firebase/firestore';
+
 
 export interface ElementStyles {
   fontSize?: string;
@@ -118,5 +120,35 @@ export const getCertificatesLog = async (limitCount = 100): Promise<any[]> => {
   } catch (e) {
     console.error('Error getting certificates log:', e);
     return [];
+  }
+};
+
+// Revoke a certificate
+export const revokeCertificate = async (certId: string, reason: string): Promise<void> => {
+  try {
+    const certDocRef = doc(db, 'certificates', certId);
+    await updateDoc(certDocRef, {
+      status: 'revoked',
+      revocationReason: reason,
+      revokedAt: new Date().toISOString()
+    });
+  } catch (e) {
+    console.error('Error revoking certificate:', e);
+    throw e;
+  }
+};
+
+// Restore a certificate
+export const restoreCertificate = async (certId: string): Promise<void> => {
+  try {
+    const certDocRef = doc(db, 'certificates', certId);
+    await updateDoc(certDocRef, {
+      status: 'valid',
+      revocationReason: null,
+      revokedAt: null
+    });
+  } catch (e) {
+    console.error('Error restoring certificate:', e);
+    throw e;
   }
 };

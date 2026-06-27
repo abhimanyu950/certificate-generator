@@ -78,7 +78,7 @@ export const generateCertificatePDF = async (canvasElement: HTMLElement): Promis
   canvasElement.style.transform = originalTransform;
 
   console.time('2. PDF Generation');
-  const imgDataUrl = canvas.toDataURL('image/png');
+  const imgDataUrl = canvas.toDataURL('image/jpeg', 0.82);
 
   // Convert DataURL image to ArrayBuffer
   const response = await fetch(imgDataUrl);
@@ -90,7 +90,7 @@ export const generateCertificatePDF = async (canvasElement: HTMLElement): Promis
   const page = pdfDoc.addPage([842, 595]);
 
   // Embed the captured image
-  const img = await pdfDoc.embedPng(imgBytes);
+  const img = await pdfDoc.embedJpg(imgBytes);
 
   // Draw the image exactly to the edges
   page.drawImage(img, {

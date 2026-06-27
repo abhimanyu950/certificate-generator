@@ -50,7 +50,7 @@ export default function RecipientsPage() {
         importCSV(text);
         const importedCount = text.split('\n').filter((l) => l.trim()).length - 1;
         AuditService.logEvent({
-          action: 'RECIPIENT_IMPORTED',
+          action: 'CSV_IMPORT',
           userId: '',
           entityType: 'recipient',
           entityId: `import_${Date.now()}`,
@@ -79,13 +79,6 @@ export default function RecipientsPage() {
       return;
     }
     addRecipient(newName, newEmail, newCourse);
-    AuditService.logEvent({
-      action: 'RECIPIENT_CREATED',
-      userId: '',
-      entityType: 'recipient',
-      entityId: `rec_${Date.now()}`,
-      metadata: { name: newName, email: newEmail, course: newCourse }
-    });
     setNewName('');
     setNewEmail('');
     setNewCourse('');
